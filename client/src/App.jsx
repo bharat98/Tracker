@@ -4,6 +4,8 @@ import * as api from './api.js';
 import CompanyRow from './components/CompanyRow.jsx';
 import CompanyModal from './components/CompanyModal.jsx';
 import TweaksPanel from './components/TweaksPanel.jsx';
+import ConflictDialog from './components/ConflictDialog.jsx';
+import Toast from './components/Toast.jsx';
 
 const makeBlankCompany = () => ({
   id: uid(),
@@ -21,6 +23,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [persistenceMode, setPersistenceMode] = useState('unknown');
   const [extractionAvailable, setExtractionAvailable] = useState(false);
+  const [githubSyncAvailable, setGithubSyncAvailable] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [modal, setModal] = useState(null); // {company, isNew}
   const [tweaksVisible, setTweaksVisible] = useState(false);
@@ -30,15 +33,27 @@ export default function App() {
   });
   const dragItem = useRef(null);
   const [dragOverId, setDragOverId] = useState(null);
+  const [toast, setToast] = useState(null);
+  // When sync returns a conflict we stash the data needed to retry with force=true.
+  const [conflict, setConflict] = useState(null);
+
+  const showToast = useCallback((kind, message) => {
+    const key = Math.random();
+    setToast({ kind, message, key });
+    setTimeout(() => {
+      setToast((prev) => (prev && prev.key === key ? null : prev));
+    }, 4000);
+  }, []);
 
   // Boot: probe backend, load state
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { persistenceMode, extractionAvailable } = await api.initDb();
+      const { persistenceMode, extractionAvailable, githubSyncAvailable } = await api.initDb();
       if (cancelled) return;
       setPersistenceMode(persistenceMode);
       setExtractionAvailable(extractionAvailable);
+      setGithubSyncAvailable(githubSyncAvailable);
       if (persistenceMode !== 'offline') {
         const [cs, tw] = await Promise.all([api.listCompanies(), api.getTweaks()]);
         if (cancelled) return;
@@ -84,14 +99,52 @@ export default function App() {
     api.updateCompany(updated.id, updated).catch(logError('replaceCompany'));
   }, []);
 
-  const createCompany = useCallback(async (c) => {
-    try {
-      const created = await api.createCompany(c);
-      setCompanies((prev) => [...prev, created]);
-    } catch (err) {
-      logError('createCompany')(err);
-    }
-  }, []);
+  // Fire-and-forget GitHub sync. Runs AFTER the DB write returns, so the
+  // tracker UI doesn't wait for GitHub at all. If it fails the tracker row
+  // is already saved — sync can be retried later.
+  const syncWithGithub = useCallback(
+    async ({ companyId, sourceUrl, sourceText, force = false }) => {
+      if (!githubSyncAvailable) return; // silent when not configured
+      try {
+        const result = await api.syncToGithub({ companyId, sourceUrl, sourceText, force });
+        if (result?.status === 'created') {
+          showToast('success', `Saved to GitHub: ${result.folderPath}`);
+        } else if (result?.status === 'conflict') {
+          // Stash the raw content so "Create new" can retry with force=true.
+          setConflict({
+            companyId,
+            sourceUrl,
+            sourceText,
+            folderName: result.folderName,
+          });
+        }
+        // 'skipped' (missing name/role) → silent, shouldn't happen for new rows
+      } catch (err) {
+        if (err.status === 503) return; // not configured → silent
+        console.error('syncToGithub failed:', err);
+        showToast('error', `GitHub sync failed: ${err.message || 'unknown error'}`);
+      }
+    },
+    [githubSyncAvailable, showToast]
+  );
+
+  const createCompany = useCallback(
+    async (c, extras = {}) => {
+      try {
+        const created = await api.createCompany(c);
+        setCompanies((prev) => [...prev, created]);
+        // Kick off GitHub sync — do NOT await, UI stays snappy.
+        syncWithGithub({
+          companyId: created.id,
+          sourceUrl: c.sourceUrl || '',
+          sourceText: extras.sourceText || '',
+        });
+      } catch (err) {
+        logError('createCompany')(err);
+      }
+    },
+    [syncWithGithub]
+  );
 
   const deleteCompany = useCallback((id) => {
     setCompanies((prev) => prev.filter((c) => c.id !== id));
@@ -100,9 +153,17 @@ export default function App() {
 
   const openAdd = () => setModal({ company: makeBlankCompany(), isNew: true });
   const openDetail = (c) => setModal({ company: c, isNew: false });
-  const saveModal = (updated) => {
-    if (modal.isNew) createCompany(updated);
+  const saveModal = (updated, extras = {}) => {
+    if (modal.isNew) createCompany(updated, extras);
     else replaceCompany(updated);
+  };
+
+  // User chose "Create new" on the conflict dialog — retry sync with force=true.
+  const handleConflictCreateNew = () => {
+    if (!conflict) return;
+    const payload = { ...conflict, force: true };
+    setConflict(null);
+    syncWithGithub(payload);
   };
 
   // Drag reorder
@@ -279,6 +340,16 @@ export default function App() {
       )}
 
       <TweaksPanel visible={tweaksVisible} tweaks={tweaks} setTweaks={setTweaks} />
+
+      {conflict && (
+        <ConflictDialog
+          folderName={conflict.folderName}
+          onUseExisting={() => setConflict(null)}
+          onCreateNew={handleConflictCreateNew}
+        />
+      )}
+
+      {toast && <Toast kind={toast.kind} message={toast.message} />}
     </div>
   );
 }

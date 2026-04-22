@@ -24,6 +24,10 @@ export default function CompanyModal({
   const [jobUrl, setJobUrl] = useState('');
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState('');
+  // Full stripped JD text from the last successful extract — we DON'T
+  // persist this to the DB, but we hand it to GitHub sync after save.
+  const [sourceText, setSourceText] = useState('');
+  const [sourceUrl, setSourceUrl] = useState(company.sourceUrl || '');
 
   const handleFetch = async () => {
     const url = jobUrl.trim();
@@ -34,14 +38,13 @@ export default function CompanyModal({
       const result = await api.extractJob(url);
       if (result.company) setName(result.company);
       if (result.role) setRole(result.role);
+      setSourceUrl(result.sourceUrl || url);
+      setSourceText(result.sourceText || '');
       if (!result.company && !result.role) {
         setFetchError("Couldn't find company or role in that page.");
       }
     } catch (err) {
-      const msg = String(err?.message || err);
-      // err.message looks like "POST /extract-job → 503 {"error":"..."}"
-      const apiMsg = msg.match(/\{"error":"([^"]+)"\}/)?.[1];
-      setFetchError(apiMsg || 'Fetch failed. Try entering details manually.');
+      setFetchError(err?.message || 'Fetch failed. Try entering details manually.');
     } finally {
       setFetching(false);
     }
@@ -80,7 +83,7 @@ export default function CompanyModal({
 
   const doSave = () => {
     if (isNew && !name.trim()) return;
-    onSave({
+    const persistedCompany = {
       ...company,
       name: name.trim() || company.name,
       role: role.trim(),
@@ -88,7 +91,11 @@ export default function CompanyModal({
       statuses,
       nextSteps,
       blockers,
-    });
+      sourceUrl,
+    };
+    // Second arg is "extras" — sourceText is sent to GitHub sync but NOT
+    // persisted in the DB. Lives only in this HTTP round-trip.
+    onSave(persistedCompany, { sourceText });
     onClose();
   };
 

@@ -7,8 +7,13 @@ async function request(method, path, body) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
+    let parsed = null;
     const text = await res.text().catch(() => '');
-    throw new Error(`${method} ${path} → ${res.status} ${text}`);
+    try { parsed = JSON.parse(text); } catch {}
+    const err = new Error(parsed?.error || `${method} ${path} → ${res.status}`);
+    err.status = res.status;
+    err.body = parsed;
+    throw err;
   }
   if (res.status === 204) return null;
   return res.json();
@@ -16,20 +21,28 @@ async function request(method, path, body) {
 
 export async function initDb() {
   // Probe the backend so the UI can show a banner if it's unreachable,
-  // and surface whether URL extraction is wired up.
+  // and surface which optional features (extraction, GitHub) are wired up.
   try {
     const health = await request('GET', '/health');
     return {
       persistenceMode: health.persistenceMode,
       extractionAvailable: Boolean(health.extractionAvailable),
+      githubSyncAvailable: Boolean(health.githubSyncAvailable),
     };
   } catch (err) {
     console.error('Backend unreachable:', err);
-    return { persistenceMode: 'offline', extractionAvailable: false };
+    return {
+      persistenceMode: 'offline',
+      extractionAvailable: false,
+      githubSyncAvailable: false,
+    };
   }
 }
 
 export const extractJob = (url) => request('POST', '/extract-job', { url });
+
+export const syncToGithub = ({ companyId, sourceUrl, sourceText, force }) =>
+  request('POST', '/github/sync', { companyId, sourceUrl, sourceText, force: !!force });
 
 export const listCompanies = () => request('GET', '/companies');
 export const createCompany = (c) => request('POST', '/companies', c);

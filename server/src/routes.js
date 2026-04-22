@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import * as db from './db.js';
 import { extractJob } from './extract.js';
+import { syncCompany, isConfigured as githubConfigured } from './github.js';
 
 export const routes = Router();
 
@@ -20,6 +21,7 @@ routes.get('/health', (req, res) => {
     persistenceMode: 'sqlite',
     dbPath: db.dbPath(),
     extractionAvailable: Boolean(process.env.OPENROUTER_API_KEY),
+    githubSyncAvailable: githubConfigured(),
   });
 });
 
@@ -76,5 +78,37 @@ routes.post('/extract-job', extractLimiter, async (req, res) => {
     const status = err.status || 500;
     // Don't leak internal stack traces to the client.
     res.status(status).json({ error: err.message || 'Extraction failed.' });
+  }
+});
+
+// Tight rate limit on GitHub sync — each call makes 1-3 outbound GitHub
+// requests. Personal-use limits; bump later if multi-user.
+const syncLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many sync requests. Try again in a minute.' },
+});
+
+routes.post('/github/sync', syncLimiter, async (req, res) => {
+  try {
+    const { companyId, sourceUrl, sourceText, force } = req.body || {};
+    if (!companyId) {
+      return res.status(400).json({ error: 'companyId is required.' });
+    }
+    const company = db.getCompany(companyId);
+    if (!company) return res.status(404).json({ error: 'Company not found.' });
+
+    const result = await syncCompany({
+      company: { ...company, created_at: company.created_at || Date.now() },
+      sourceUrl,
+      sourceText,
+      force: Boolean(force),
+    });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ error: err.message || 'GitHub sync failed.' });
   }
 });

@@ -23,13 +23,20 @@ db.exec(`
     notes       TEXT NOT NULL DEFAULT '',
     position    INTEGER NOT NULL,
     created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL
+    updated_at  INTEGER NOT NULL,
+    source_url  TEXT NOT NULL DEFAULT ''
   );
   CREATE TABLE IF NOT EXISTS tweaks (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
 `);
+
+// Migration for databases created before source_url existed.
+const cols = db.prepare('PRAGMA table_info(companies)').all();
+if (!cols.some((c) => c.name === 'source_url')) {
+  db.exec(`ALTER TABLE companies ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`);
+}
 
 const defStatuses = () =>
   DEFAULT_STATUS_LABELS.split(',').map((s) => ({ label: s.trim(), checked: false }));
@@ -91,6 +98,7 @@ const parseRow = (row) => ({
   blockers: row.blockers,
   notes: row.notes,
   position: row.position,
+  sourceUrl: row.source_url || '',
 });
 
 // --- Public API (used by HTTP routes today; MCP server tomorrow) ---
@@ -112,8 +120,8 @@ export function createCompany(input) {
   const position = (maxRow?.max ?? -1) + 1;
   const id = input.id || uid();
   db.prepare(
-    `INSERT INTO companies (id, name, role, statuses, next_steps, blockers, notes, position, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO companies (id, name, role, statuses, next_steps, blockers, notes, position, created_at, updated_at, source_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.name || '',
@@ -124,7 +132,8 @@ export function createCompany(input) {
     input.notes || '',
     position,
     now,
-    now
+    now,
+    input.sourceUrl || ''
   );
   return getCompany(id);
 }
@@ -137,6 +146,7 @@ const FIELD_MAP = {
   blockers: 'blockers',
   notes: 'notes',
   position: 'position',
+  sourceUrl: 'source_url',
 };
 const JSON_FIELDS = new Set(['statuses', 'nextSteps']);
 

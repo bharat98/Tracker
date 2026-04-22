@@ -289,6 +289,10 @@ async function callOpenRouter({ ogTitle, ogDescription, ogSiteName, text, url })
   };
 }
 
+// sourceText is capped at 100 KB — plenty for any realistic JD, keeps
+// the HTTP response to the client reasonable.
+const MAX_SOURCE_TEXT = 100_000;
+
 export async function extractJob(rawUrl) {
   // Fail fast if extraction isn't configured — avoids a wasted outbound fetch.
   if (!process.env.OPENROUTER_API_KEY) {
@@ -304,5 +308,10 @@ export async function extractJob(rawUrl) {
   const og = extractOgTags(html);
   const text = htmlToText(html);
   const { company, role } = await callOpenRouter({ ...og, text, url: url.toString() });
-  return { company, role, sourceUrl: url.toString() };
+  return {
+    company,
+    role,
+    sourceUrl: url.toString(),
+    sourceText: text.slice(0, MAX_SOURCE_TEXT),
+  };
 }
