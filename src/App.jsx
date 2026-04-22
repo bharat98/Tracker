@@ -149,8 +149,7 @@ export default function App() {
             marginBottom: 16,
           }}
         >
-          ⚠ Storage unavailable — data will not survive a page reload. If you're using Brave,
-          try disabling Shields for localhost, or switch to Chrome/Edge.
+          ⚠ Storage unavailable — data will not survive a page reload.
         </div>
       )}
 

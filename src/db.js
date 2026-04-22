@@ -1,8 +1,12 @@
 import { DEFAULT_STATUS_LABELS, uid } from './theme.js';
 
-const KEY_COMPANIES = 'job_tracker_companies';
-const KEY_TWEAKS = 'job_tracker_tweaks';
+const DB_NAME = 'job_tracker_v2';
+const DB_VERSION = 1;
+const STORE = 'kv';
+const KEY_COMPANIES = 'companies';
+const KEY_TWEAKS = 'tweaks';
 
+let idb = null;
 let companies = [];
 let tweaks = { statusLabels: DEFAULT_STATUS_LABELS, rowDensity: 'comfortable' };
 let persistenceMode = 'unknown';
@@ -37,33 +41,99 @@ const SEED = () => {
   ];
 };
 
+// --- IndexedDB helpers ---
+const openIdb = () =>
+  new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(req.result);
+    req.onupgradeneeded = (e) => {
+      const database = e.target.result;
+      if (!database.objectStoreNames.contains(STORE)) {
+        database.createObjectStore(STORE);
+      }
+    };
+  });
+
+const idbGet = (key) =>
+  new Promise((resolve, reject) => {
+    const tx = idb.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).get(key);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(req.result);
+  });
+
+const idbPut = (key, value) =>
+  new Promise((resolve, reject) => {
+    const tx = idb.transaction(STORE, 'readwrite');
+    const req = tx.objectStore(STORE).put(value, key);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve();
+  });
+
+// --- persistence write-through ---
 const persist = () => {
-  try {
-    localStorage.setItem(KEY_COMPANIES, JSON.stringify(companies));
-  } catch {}
+  if (persistenceMode === 'indexeddb') {
+    idbPut(KEY_COMPANIES, companies).catch((e) =>
+      console.error('IDB write failed for companies:', e)
+    );
+  } else if (persistenceMode === 'localstorage') {
+    try {
+      localStorage.setItem(`${DB_NAME}_${KEY_COMPANIES}`, JSON.stringify(companies));
+    } catch (e) {
+      console.error('localStorage write failed:', e);
+    }
+  }
 };
 
 const persistTweaks = () => {
-  try {
-    localStorage.setItem(KEY_TWEAKS, JSON.stringify(tweaks));
-  } catch {}
+  if (persistenceMode === 'indexeddb') {
+    idbPut(KEY_TWEAKS, tweaks).catch((e) =>
+      console.error('IDB write failed for tweaks:', e)
+    );
+  } else if (persistenceMode === 'localstorage') {
+    try {
+      localStorage.setItem(`${DB_NAME}_${KEY_TWEAKS}`, JSON.stringify(tweaks));
+    } catch {}
+  }
 };
 
-export function initDb() {
+// --- init: try IDB → localStorage → memory ---
+export async function initDb() {
   try {
-    const raw = localStorage.getItem(KEY_COMPANIES);
-    const rawTweaks = localStorage.getItem(KEY_TWEAKS);
-    companies = raw ? JSON.parse(raw) : SEED();
-    tweaks = rawTweaks ? { ...tweaks, ...JSON.parse(rawTweaks) } : tweaks;
-    if (!companies.length) { companies = SEED(); persist(); }
-    persistenceMode = 'localstorage';
-  } catch {
-    companies = SEED();
-    persistenceMode = 'memory';
+    idb = await openIdb();
+    const [companiesData, tweaksData] = await Promise.all([
+      idbGet(KEY_COMPANIES),
+      idbGet(KEY_TWEAKS),
+    ]);
+    companies = Array.isArray(companiesData) && companiesData.length ? companiesData : SEED();
+    tweaks = tweaksData ? { ...tweaks, ...tweaksData } : tweaks;
+    persistenceMode = 'indexeddb';
+    if (!companiesData) await idbPut(KEY_COMPANIES, companies);
+    return { persistenceMode };
+  } catch (idbErr) {
+    console.warn('IndexedDB unavailable, falling back to localStorage.', idbErr);
   }
-  return Promise.resolve({ persistenceMode });
+
+  try {
+    const raw = localStorage.getItem(`${DB_NAME}_${KEY_COMPANIES}`);
+    const rawTweaks = localStorage.getItem(`${DB_NAME}_${KEY_TWEAKS}`);
+    const parsed = raw ? JSON.parse(raw) : null;
+    companies = Array.isArray(parsed) && parsed.length ? parsed : SEED();
+    tweaks = rawTweaks ? { ...tweaks, ...JSON.parse(rawTweaks) } : tweaks;
+    persistenceMode = 'localstorage';
+    if (!raw) localStorage.setItem(`${DB_NAME}_${KEY_COMPANIES}`, JSON.stringify(companies));
+    return { persistenceMode };
+  } catch (lsErr) {
+    console.warn('localStorage unavailable, falling back to in-memory.', lsErr);
+  }
+
+  companies = SEED();
+  persistenceMode = 'memory';
+  return { persistenceMode };
 }
 
+// --- public API (sync; writes fire-and-forget to storage) ---
 export function listCompanies() {
   return [...companies].sort((a, b) => a.position - b.position);
 }
