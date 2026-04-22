@@ -4,12 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "dev": "node --watch --env-file=.env src/index.js",
+    "dev:nokey": "node --watch src/index.js",
+    "start": "node --env-file=.env src/index.js",
+    "start:nokey": "node src/index.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
     "cors": "^2.8.5",
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0"
   }
 }

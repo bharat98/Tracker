@@ -20,6 +20,7 @@ const logError = (label) => (err) => console.error(`${label} failed:`, err);
 export default function App() {
   const [ready, setReady] = useState(false);
   const [persistenceMode, setPersistenceMode] = useState('unknown');
+  const [extractionAvailable, setExtractionAvailable] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [modal, setModal] = useState(null); // {company, isNew}
   const [tweaksVisible, setTweaksVisible] = useState(false);
@@ -34,9 +35,10 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { persistenceMode } = await api.initDb();
+      const { persistenceMode, extractionAvailable } = await api.initDb();
       if (cancelled) return;
       setPersistenceMode(persistenceMode);
+      setExtractionAvailable(extractionAvailable);
       if (persistenceMode !== 'offline') {
         const [cs, tw] = await Promise.all([api.listCompanies(), api.getTweaks()]);
         if (cancelled) return;
@@ -270,6 +272,7 @@ export default function App() {
         <CompanyModal
           company={modal.company}
           isNew={modal.isNew}
+          extractionAvailable={extractionAvailable}
           onClose={() => setModal(null)}
           onSave={saveModal}
         />

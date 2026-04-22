@@ -1,10 +1,26 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import * as db from './db.js';
+import { extractJob } from './extract.js';
 
 export const routes = Router();
 
+// Tight rate limit on the extraction endpoint — it makes outbound network
+// calls and burns LLM tokens, so abuse is expensive in two ways.
+const extractLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many extraction requests. Try again in a minute.' },
+});
+
 routes.get('/health', (req, res) => {
-  res.json({ persistenceMode: 'sqlite', dbPath: db.dbPath() });
+  res.json({
+    persistenceMode: 'sqlite',
+    dbPath: db.dbPath(),
+    extractionAvailable: Boolean(process.env.OPENROUTER_API_KEY),
+  });
 });
 
 routes.get('/companies', (req, res) => {
@@ -49,4 +65,16 @@ routes.get('/tweaks', (req, res) => {
 routes.put('/tweaks', (req, res) => {
   db.setTweaks(req.body || {});
   res.status(204).end();
+});
+
+routes.post('/extract-job', extractLimiter, async (req, res) => {
+  try {
+    const { url } = req.body || {};
+    const result = await extractJob(url);
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    // Don't leak internal stack traces to the client.
+    res.status(status).json({ error: err.message || 'Extraction failed.' });
+  }
 });

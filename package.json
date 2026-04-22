@@ -2,14 +2,12 @@
   "name": "job-tracker",
   "version": "2.0.0",
   "private": true,
-  "description": "Job application tracker — React + Express + SQLite, deployable to GCP Cloud Run or a GCE VM.",
+  "description": "Job application tracker — React + Express + SQLite.",
   "scripts": {
     "install-all": "npm install && npm --prefix client install && npm --prefix server install",
     "dev": "concurrently -n client,server -c cyan,magenta \"npm --prefix client run dev\" \"npm --prefix server run dev\"",
     "build": "npm --prefix client run build",
-    "start": "node server/src/index.js",
-    "docker:build": "docker build -t job-tracker .",
-    "docker:run": "docker run --rm -p 8080:8080 -v tracker_data:/app/data job-tracker"
+    "start": "node server/src/index.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

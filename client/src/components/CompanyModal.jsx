@@ -1,8 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { C } from '../theme.js';
+import * as api from '../api.js';
 import NextStepsTree from './NextStepsTree.jsx';
 
-export default function CompanyModal({ company, isNew, onClose, onSave }) {
+export default function CompanyModal({
+  company,
+  isNew,
+  extractionAvailable = false,
+  onClose,
+  onSave,
+}) {
   const [name, setName] = useState(company.name);
   const [role, setRole] = useState(company.role);
   const [notes, setNotes] = useState(company.notes || '');
@@ -12,6 +19,33 @@ export default function CompanyModal({ company, isNew, onClose, onSave }) {
   const [editingIdx, setEditingIdx] = useState(null);
   const [editLabel, setEditLabel] = useState('');
   const labelRef = useRef(null);
+
+  // URL extraction state (only used in new-company mode)
+  const [jobUrl, setJobUrl] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState('');
+
+  const handleFetch = async () => {
+    const url = jobUrl.trim();
+    if (!url || fetching) return;
+    setFetchError('');
+    setFetching(true);
+    try {
+      const result = await api.extractJob(url);
+      if (result.company) setName(result.company);
+      if (result.role) setRole(result.role);
+      if (!result.company && !result.role) {
+        setFetchError("Couldn't find company or role in that page.");
+      }
+    } catch (err) {
+      const msg = String(err?.message || err);
+      // err.message looks like "POST /extract-job → 503 {"error":"..."}"
+      const apiMsg = msg.match(/\{"error":"([^"]+)"\}/)?.[1];
+      setFetchError(apiMsg || 'Fetch failed. Try entering details manually.');
+    } finally {
+      setFetching(false);
+    }
+  };
 
   useEffect(() => {
     if (editingIdx !== null && labelRef.current) labelRef.current.focus();
@@ -132,34 +166,94 @@ export default function CompanyModal({ company, isNew, onClose, onSave }) {
         </div>
 
         {isNew && (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: 12,
-              marginBottom: 20,
-            }}
-          >
-            <div>
-              <div style={sectionTitle}>Company Name</div>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Google"
-                style={inputStyle}
-                autoFocus
-              />
+          <>
+            {/* Paste-URL shortcut: pre-fills name and role via backend LLM call */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={sectionTitle}>
+                Paste Job URL
+                {!extractionAvailable && (
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: C.textMuted,
+                      textTransform: 'none',
+                      letterSpacing: 0,
+                    }}
+                  >
+                    — disabled (no OPENROUTER_API_KEY in server/.env)
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={jobUrl}
+                  onChange={(e) => setJobUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleFetch()}
+                  placeholder="https://www.linkedin.com/jobs/view/..."
+                  disabled={!extractionAvailable || fetching}
+                  style={{
+                    ...inputStyle,
+                    opacity: extractionAvailable ? 1 : 0.5,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleFetch}
+                  disabled={!extractionAvailable || fetching || !jobUrl.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: C.accent,
+                    color: '#0F0F0F',
+                    cursor:
+                      !extractionAvailable || fetching || !jobUrl.trim() ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                    opacity: !extractionAvailable || !jobUrl.trim() ? 0.5 : 1,
+                  }}
+                >
+                  {fetching ? 'Fetching…' : 'Fetch'}
+                </button>
+              </div>
+              {fetchError && (
+                <div style={{ marginTop: 6, fontSize: 12, color: C.red }}>{fetchError}</div>
+              )}
             </div>
-            <div>
-              <div style={sectionTitle}>Role</div>
-              <input
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                placeholder="e.g. TAM"
-                style={inputStyle}
-              />
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 12,
+                marginBottom: 20,
+              }}
+            >
+              <div>
+                <div style={sectionTitle}>Company Name</div>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Google"
+                  style={inputStyle}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <div style={sectionTitle}>Role</div>
+                <input
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  placeholder="e.g. TAM"
+                  style={inputStyle}
+                />
+              </div>
             </div>
-          </div>
+          </>
         )}
 
         <div

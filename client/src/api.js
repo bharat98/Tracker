@@ -15,15 +15,21 @@ async function request(method, path, body) {
 }
 
 export async function initDb() {
-  // Probe the backend so the UI can show a banner if it's unreachable.
+  // Probe the backend so the UI can show a banner if it's unreachable,
+  // and surface whether URL extraction is wired up.
   try {
-    const { persistenceMode } = await request('GET', '/health');
-    return { persistenceMode };
+    const health = await request('GET', '/health');
+    return {
+      persistenceMode: health.persistenceMode,
+      extractionAvailable: Boolean(health.extractionAvailable),
+    };
   } catch (err) {
     console.error('Backend unreachable:', err);
-    return { persistenceMode: 'offline' };
+    return { persistenceMode: 'offline', extractionAvailable: false };
   }
 }
+
+export const extractJob = (url) => request('POST', '/extract-job', { url });
 
 export const listCompanies = () => request('GET', '/companies');
 export const createCompany = (c) => request('POST', '/companies', c);
