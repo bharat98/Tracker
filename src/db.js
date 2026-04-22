@@ -100,10 +100,16 @@ export function initDb() {
       });
       db = new poolUtil.OpfsSAHPoolDb('/tracker.db');
       persistenceMode = 'opfs';
-    } catch (err) {
-      console.warn('OPFS SAH not available, falling back to in-memory DB.', err);
-      db = new sqlite3.oo1.DB(':memory:', 'ct');
-      persistenceMode = 'memory';
+    } catch (opfsErr) {
+      console.warn('OPFS SAH unavailable, trying localStorage (kvvfs).', opfsErr);
+      try {
+        db = new sqlite3.oo1.DB('file:tracker?vfs=kvvfs', 'ct');
+        persistenceMode = 'localstorage';
+      } catch (kvErr) {
+        console.warn('kvvfs unavailable, falling back to in-memory DB.', kvErr);
+        db = new sqlite3.oo1.DB(':memory:', 'ct');
+        persistenceMode = 'memory';
+      }
     }
 
     db.exec(SCHEMA);

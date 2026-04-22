@@ -56,7 +56,7 @@ export default function CompanyRow({
           borderRight: `1px solid ${C.border}`,
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'center',
+          justifyContent: 'flex-start',
         }}
       >
         <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{company.name}</div>

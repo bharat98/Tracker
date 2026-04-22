@@ -149,8 +149,8 @@ export default function App() {
             marginBottom: 16,
           }}
         >
-          ⚠ Your browser doesn't support OPFS persistence. Data will not survive page reload.
-          Try Chrome 102+, Firefox 111+, or Safari 17+.
+          ⚠ Storage unavailable — data will not survive a page reload. If you're using Brave,
+          try disabling Shields for localhost, or switch to Chrome/Edge.
         </div>
       )}
 
