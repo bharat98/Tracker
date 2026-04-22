@@ -170,7 +170,7 @@ async function callOpenRouter({ ogTitle, ogDescription, ogSiteName, text, url })
       { status: 503 }
     );
   }
-  const model = process.env.OPENROUTER_MODEL || 'google/gemini-2.0-flash-exp:free';
+  const model = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free';
 
   const system =
     'You extract structured metadata from job postings. ' +
@@ -205,7 +205,9 @@ async function callOpenRouter({ ogTitle, ogDescription, ogSiteName, text, url })
       body: JSON.stringify({
         model,
         temperature: 0,
-        response_format: { type: 'json_object' },
+        // NOTE: not passing response_format — many free-tier models (MiniMax,
+        // some Gemma variants) silently return empty completions when it's
+        // set. Prompt-only JSON is more portable across providers.
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: userMessage },
@@ -226,20 +228,65 @@ async function callOpenRouter({ ogTitle, ogDescription, ogSiteName, text, url })
   }
   const data = await res.json();
   const raw = data?.choices?.[0]?.message?.content ?? '';
-  // Models sometimes wrap JSON in markdown fences even when asked not to.
-  const cleaned = raw
-    .replace(/^```(?:json)?/i, '')
-    .replace(/```$/, '')
-    .trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    return {
-      company: typeof parsed.company === 'string' ? parsed.company.trim() : '',
-      role: typeof parsed.role === 'string' ? parsed.role.trim() : '',
-    };
-  } catch {
-    throw Object.assign(new Error('LLM did not return valid JSON.'), { status: 502 });
+  const finishReason = data?.choices?.[0]?.finish_reason;
+
+  // Some free-tier models (MiniMax-m2.5, rate-limited Gemma) return 200 OK
+  // with completely empty content. Surface a specific error so users know
+  // to swap models, rather than the generic "invalid JSON".
+  if (!raw.trim()) {
+    console.error('[extract] empty completion from model', {
+      model,
+      finishReason,
+      usage: data?.usage,
+    });
+    throw Object.assign(
+      new Error(
+        `Model "${model}" returned an empty response. Try switching OPENROUTER_MODEL to openai/gpt-oss-20b:free or inclusionai/ling-2.6-flash:free.`
+      ),
+      { status: 502 }
+    );
   }
+
+  // Strip common wrappers: markdown fences, <think> tags from reasoning models.
+  let cleaned = raw
+    .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+    .trim();
+
+  // First try direct parse.
+  let parsed = null;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    // Fallback: find the first { ... } block anywhere in the output.
+    const match = cleaned.match(/\{[\s\S]*?\}/);
+    if (match) {
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    console.error('[extract] LLM did not return parseable JSON', {
+      finishReason,
+      usage: data?.usage,
+      rawFirst500: raw.slice(0, 500),
+    });
+    const detail =
+      finishReason === 'length'
+        ? 'The model ran out of tokens before emitting JSON (likely too much "thinking"). Try a non-reasoning model like google/gemini-2.0-flash-exp:free.'
+        : 'LLM did not return valid JSON.';
+    throw Object.assign(new Error(detail), { status: 502 });
+  }
+
+  return {
+    company: typeof parsed.company === 'string' ? parsed.company.trim() : '',
+    role: typeof parsed.role === 'string' ? parsed.role.trim() : '',
+  };
 }
 
 export async function extractJob(rawUrl) {
