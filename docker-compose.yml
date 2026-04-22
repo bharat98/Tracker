@@ -1,0 +1,19 @@
+# For local parity with production, or deploying on a VM (GCE, EC2, etc.).
+# The SQLite file is stored on a named volume so it survives container restarts.
+services:
+  tracker:
+    build: .
+    image: job-tracker:latest
+    container_name: job-tracker
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - tracker_data:/app/data
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DB_PATH: /app/data/tracker.db
+
+volumes:
+  tracker_data:

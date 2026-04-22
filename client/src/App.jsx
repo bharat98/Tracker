@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { C, DEFAULT_STATUS_LABELS, uid } from './theme.js';
-import * as db from './db.js';
+import * as api from './api.js';
 import CompanyRow from './components/CompanyRow.jsx';
 import CompanyModal from './components/CompanyModal.jsx';
 import TweaksPanel from './components/TweaksPanel.jsx';
@@ -15,6 +15,8 @@ const makeBlankCompany = () => ({
   notes: '',
 });
 
+const logError = (label) => (err) => console.error(`${label} failed:`, err);
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [persistenceMode, setPersistenceMode] = useState('unknown');
@@ -28,15 +30,19 @@ export default function App() {
   const dragItem = useRef(null);
   const [dragOverId, setDragOverId] = useState(null);
 
-  // Boot: init DB, load state
+  // Boot: probe backend, load state
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { persistenceMode } = await db.initDb();
+      const { persistenceMode } = await api.initDb();
       if (cancelled) return;
       setPersistenceMode(persistenceMode);
-      setCompanies(db.listCompanies());
-      setTweaks(db.getTweaks());
+      if (persistenceMode !== 'offline') {
+        const [cs, tw] = await Promise.all([api.listCompanies(), api.getTweaks()]);
+        if (cancelled) return;
+        setCompanies(cs);
+        setTweaks(tw);
+      }
       setReady(true);
     })();
     return () => {
@@ -59,31 +65,35 @@ export default function App() {
 
   // Persist tweaks
   useEffect(() => {
-    if (!ready) return;
-    db.setTweaks(tweaks);
+    if (!ready || persistenceMode === 'offline') return;
+    api.setTweaks(tweaks).catch(logError('setTweaks'));
     try {
       window.parent.postMessage({ type: '__edit_mode_set_keys', edits: tweaks }, '*');
     } catch {}
-  }, [tweaks, ready]);
+  }, [tweaks, ready, persistenceMode]);
 
   const updateCompany = useCallback((id, patch) => {
     setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
-    db.updateCompany(id, patch);
+    api.updateCompany(id, patch).catch(logError('updateCompany'));
   }, []);
 
   const replaceCompany = useCallback((updated) => {
     setCompanies((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-    db.updateCompany(updated.id, updated);
+    api.updateCompany(updated.id, updated).catch(logError('replaceCompany'));
   }, []);
 
-  const createCompany = useCallback((c) => {
-    const created = db.createCompany(c);
-    setCompanies((prev) => [...prev, { ...c, ...created }]);
+  const createCompany = useCallback(async (c) => {
+    try {
+      const created = await api.createCompany(c);
+      setCompanies((prev) => [...prev, created]);
+    } catch (err) {
+      logError('createCompany')(err);
+    }
   }, []);
 
   const deleteCompany = useCallback((id) => {
     setCompanies((prev) => prev.filter((c) => c.id !== id));
-    db.deleteCompany(id);
+    api.deleteCompany(id).catch(logError('deleteCompany'));
   }, []);
 
   const openAdd = () => setModal({ company: makeBlankCompany(), isNew: true });
@@ -113,7 +123,7 @@ export default function App() {
       const ti = list.findIndex((c) => c.id === targetId);
       const [item] = list.splice(si, 1);
       list.splice(ti, 0, item);
-      db.reorderCompanies(list.map((c) => c.id));
+      api.reorderCompanies(list.map((c) => c.id)).catch(logError('reorderCompanies'));
       return list;
     });
   };
@@ -137,7 +147,7 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '28px 24px' }}>
-      {persistenceMode === 'memory' && (
+      {persistenceMode === 'offline' && (
         <div
           style={{
             background: C.redDim,
@@ -149,7 +159,11 @@ export default function App() {
             marginBottom: 16,
           }}
         >
-          ⚠ Storage unavailable — data will not survive a page reload.
+          ⚠ Backend unreachable — start the server with{' '}
+          <code style={{ background: C.bg, padding: '1px 5px', borderRadius: 3 }}>
+            npm run dev
+          </code>{' '}
+          or check that the API URL is correct.
         </div>
       )}
 

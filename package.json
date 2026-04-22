@@ -2,18 +2,16 @@
   "name": "job-tracker",
   "version": "2.0.0",
   "private": true,
-  "type": "module",
+  "description": "Job application tracker — React + Express + SQLite, deployable to GCP Cloud Run or a GCE VM.",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "install-all": "npm install && npm --prefix client install && npm --prefix server install",
+    "dev": "concurrently -n client,server -c cyan,magenta \"npm --prefix client run dev\" \"npm --prefix server run dev\"",
+    "build": "npm --prefix client run build",
+    "start": "node server/src/index.js",
+    "docker:build": "docker build -t job-tracker .",
+    "docker:run": "docker run --rm -p 8080:8080 -v tracker_data:/app/data job-tracker"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.11"
+    "concurrently": "^9.1.0"
   }
 }

@@ -1,4 +1,18 @@
 node_modules
+**/node_modules
 dist
+**/dist
 .DS_Store
 *.log
+
+# runtime data — never commit the SQLite DB
+data/
+**/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# env
+.env
+.env.local
