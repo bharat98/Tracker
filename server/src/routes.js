@@ -60,6 +60,55 @@ routes.post('/companies/reorder', (req, res) => {
   res.status(204).end();
 });
 
+// ──────────────────────────────────────────────────────────────────
+// Events — append-only log, the structured record AI tools consume
+// ──────────────────────────────────────────────────────────────────
+// GET /companies/:id/events?kind=&channel=&actor=&after=&before=
+routes.get('/companies/:id/events', (req, res) => {
+  const { kind, channel, actor, after, before } = req.query;
+  const filters = { companyId: req.params.id };
+  if (kind) filters.kind = String(kind);
+  if (channel) filters.channel = String(channel);
+  if (actor) filters.actor = String(actor);
+  if (after) filters.after = Number(after);
+  if (before) filters.before = Number(before);
+  res.json(db.listEvents(filters));
+});
+
+// POST /companies/:id/events — append an event
+routes.post('/companies/:id/events', (req, res) => {
+  const company = db.getCompany(req.params.id);
+  if (!company) return res.status(404).json({ error: 'Company not found.' });
+  const body = req.body || {};
+  if (!body.kind) return res.status(400).json({ error: 'kind is required.' });
+  const created = db.createEvent({ ...body, companyId: req.params.id });
+  res.status(201).json(created);
+});
+
+// Cross-company event query: GET /events?kind=&channel=&actor=&after=&before=
+routes.get('/events', (req, res) => {
+  const { kind, channel, actor, after, before, companyId } = req.query;
+  const filters = {};
+  if (companyId) filters.companyId = String(companyId);
+  if (kind) filters.kind = String(kind);
+  if (channel) filters.channel = String(channel);
+  if (actor) filters.actor = String(actor);
+  if (after) filters.after = Number(after);
+  if (before) filters.before = Number(before);
+  res.json(db.listEvents(filters));
+});
+
+routes.put('/events/:id', (req, res) => {
+  const updated = db.updateEvent(req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'not found' });
+  res.json(updated);
+});
+
+routes.delete('/events/:id', (req, res) => {
+  db.deleteEvent(req.params.id);
+  res.status(204).end();
+});
+
 routes.get('/tweaks', (req, res) => {
   res.json(db.getTweaks());
 });

@@ -50,5 +50,22 @@ export const updateCompany = (id, patch) => request('PUT', `/companies/${id}`, p
 export const deleteCompany = (id) => request('DELETE', `/companies/${id}`);
 export const reorderCompanies = (orderedIds) =>
   request('POST', '/companies/reorder', { orderedIds });
+
+// Events — append-only structured log per company.
+// Filters: { kind, channel, actor, after, before }
+export const listEvents = (companyId, filters = {}) => {
+  const qs = new URLSearchParams(
+    Object.entries(filters).filter(([, v]) => v !== undefined && v !== '')
+  ).toString();
+  const path = companyId
+    ? `/companies/${companyId}/events${qs ? `?${qs}` : ''}`
+    : `/events${qs ? `?${qs}` : ''}`;
+  return request('GET', path);
+};
+export const createEvent = (companyId, event) =>
+  request('POST', `/companies/${companyId}/events`, event);
+export const updateEvent = (id, patch) => request('PUT', `/events/${id}`, patch);
+export const deleteEvent = (id) => request('DELETE', `/events/${id}`);
+
 export const getTweaks = () => request('GET', '/tweaks');
 export const setTweaks = (patch) => request('PUT', '/tweaks', patch);

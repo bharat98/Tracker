@@ -2,6 +2,35 @@ import { useState, useEffect, useRef } from 'react';
 import { C } from '../theme.js';
 import * as api from '../api.js';
 import NextStepsTree from './NextStepsTree.jsx';
+import EventLog from './EventLog.jsx';
+
+// Dropdown options for the structured metadata. Keep in sync with the
+// AI-facing MCP spec — these are the canonical values analytics will
+// group by.
+const CHANNEL_OPTIONS = [
+  { value: '', label: '—' },
+  { value: 'portal', label: 'Company portal' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'referral', label: 'Referral' },
+  { value: 'cold_email', label: 'Cold email' },
+  { value: 'recruiter', label: 'Recruiter outreach' },
+  { value: 'job_board', label: 'Job board' },
+  { value: 'event', label: 'Event / networking' },
+  { value: 'other', label: 'Other' },
+];
+
+const STAGE_OPTIONS = [
+  { value: 'sourced', label: 'Sourced' },
+  { value: 'applied', label: 'Applied' },
+  { value: 'screening', label: 'Phone screen' },
+  { value: 'interviewing', label: 'Interviewing' },
+  { value: 'final_round', label: 'Final round' },
+  { value: 'offer', label: 'Offer received' },
+  { value: 'accepted', label: 'Accepted' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'withdrawn', label: 'Withdrawn' },
+  { value: 'ghosted', label: 'Ghosted' },
+];
 
 export default function CompanyModal({
   company,
@@ -19,6 +48,21 @@ export default function CompanyModal({
   const [editingIdx, setEditingIdx] = useState(null);
   const [editLabel, setEditLabel] = useState('');
   const labelRef = useRef(null);
+
+  // Structured metadata — the fields AI tools will use for analysis.
+  const [channel, setChannel] = useState(company.channel || '');
+  const [referralName, setReferralName] = useState(company.referralName || '');
+  const [referralRelationship, setReferralRelationship] = useState(
+    company.referralRelationship || ''
+  );
+  const [hmName, setHmName] = useState(company.hmName || '');
+  const [hmContactedDirectly, setHmContactedDirectly] = useState(
+    Boolean(company.hmContactedDirectly)
+  );
+  const [recruiterName, setRecruiterName] = useState(company.recruiterName || '');
+  const [recruiterCompany, setRecruiterCompany] = useState(company.recruiterCompany || '');
+  const [currentStage, setCurrentStage] = useState(company.currentStage || 'sourced');
+  const [resumeVersion, setResumeVersion] = useState(company.resumeVersion || '');
 
   // URL extraction state (only used in new-company mode)
   const [jobUrl, setJobUrl] = useState('');
@@ -92,6 +136,15 @@ export default function CompanyModal({
       nextSteps,
       blockers,
       sourceUrl,
+      channel,
+      referralName: referralName.trim(),
+      referralRelationship: referralRelationship.trim(),
+      hmName: hmName.trim(),
+      hmContactedDirectly,
+      recruiterName: recruiterName.trim(),
+      recruiterCompany: recruiterCompany.trim(),
+      currentStage,
+      resumeVersion: resumeVersion.trim(),
     };
     // Second arg is "extras" — sourceText is sent to GitHub sync but NOT
     // persisted in the DB. Lives only in this HTTP round-trip.
@@ -371,6 +424,145 @@ export default function CompanyModal({
             }}
           />
         </div>
+
+        {/* ── Structured metadata ── */}
+        <div
+          style={{
+            marginBottom: 24,
+            padding: 16,
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            background: C.card,
+          }}
+        >
+          <div style={{ ...sectionTitle, marginBottom: 14 }}>Details</div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 12,
+              marginBottom: 12,
+            }}
+          >
+            <div>
+              <div style={sectionTitle}>Stage</div>
+              <select
+                value={currentStage}
+                onChange={(e) => setCurrentStage(e.target.value)}
+                style={{ ...inputStyle, padding: '8px 10px' }}
+              >
+                {STAGE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div style={sectionTitle}>Channel</div>
+              <select
+                value={channel}
+                onChange={(e) => setChannel(e.target.value)}
+                style={{ ...inputStyle, padding: '8px 10px' }}
+              >
+                {CHANNEL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 12,
+              marginBottom: 12,
+            }}
+          >
+            <div>
+              <div style={sectionTitle}>Hiring Manager</div>
+              <input
+                value={hmName}
+                onChange={(e) => setHmName(e.target.value)}
+                placeholder="Name"
+                style={inputStyle}
+              />
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginTop: 6,
+                  fontSize: 12,
+                  color: C.textDim,
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={hmContactedDirectly}
+                  onChange={(e) => setHmContactedDirectly(e.target.checked)}
+                  style={{ accentColor: C.accent, width: 13, height: 13, cursor: 'pointer' }}
+                />
+                Contacted directly
+              </label>
+            </div>
+            <div>
+              <div style={sectionTitle}>Recruiter</div>
+              <input
+                value={recruiterName}
+                onChange={(e) => setRecruiterName(e.target.value)}
+                placeholder="Name"
+                style={inputStyle}
+              />
+              <input
+                value={recruiterCompany}
+                onChange={(e) => setRecruiterCompany(e.target.value)}
+                placeholder="Agency / firm"
+                style={{ ...inputStyle, marginTop: 6 }}
+              />
+            </div>
+          </div>
+
+          <div
+            style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}
+          >
+            <div>
+              <div style={sectionTitle}>Referral</div>
+              <input
+                value={referralName}
+                onChange={(e) => setReferralName(e.target.value)}
+                placeholder="Name of referrer"
+                style={inputStyle}
+              />
+              <input
+                value={referralRelationship}
+                onChange={(e) => setReferralRelationship(e.target.value)}
+                placeholder="Relationship (ex-coworker, friend)"
+                style={{ ...inputStyle, marginTop: 6 }}
+              />
+            </div>
+            <div>
+              <div style={sectionTitle}>Resume Version</div>
+              <input
+                value={resumeVersion}
+                onChange={(e) => setResumeVersion(e.target.value)}
+                placeholder="e.g. v3-TAM-focus"
+                style={inputStyle}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* ── Event log (existing companies only — needs a company_id) ── */}
+        {!isNew && (
+          <div style={{ marginBottom: 24 }}>
+            <EventLog companyId={company.id} />
+          </div>
+        )}
 
         <div style={{ marginBottom: 24 }}>
           <div style={sectionTitle}>Notes / Gameplay</div>

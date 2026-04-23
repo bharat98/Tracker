@@ -20,6 +20,26 @@ const makeBlankCompany = () => ({
 
 const logError = (label) => (err) => console.error(`${label} failed:`, err);
 
+// Map a newly-checked status label to a structured event (or null if we
+// don't have a meaningful event kind for it). Keeps the AI-facing event
+// log rich without asking the user to log events manually.
+const statusToEvent = (label) => {
+  const l = label.toLowerCase();
+  if (l.includes('reachout') || (l.includes('linkedin') && !l.includes('reach'))) {
+    return { kind: 'reached_out', actor: 'me', channel: 'linkedin' };
+  }
+  if (l.includes('applied')) return { kind: 'applied', actor: 'me' };
+  if (l.includes('hiring manager') && l.includes('contact')) {
+    return { kind: 'hm_contacted', actor: 'me' };
+  }
+  if (l.includes('someone') && l.includes('connect')) {
+    return { kind: 'responded', actor: 'them' };
+  }
+  if (l.includes('interview')) return { kind: 'interviewed', actor: 'me' };
+  if (l.includes('offer')) return { kind: 'offer_received', actor: 'them' };
+  return null;
+};
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [persistenceMode, setPersistenceMode] = useState('unknown');
@@ -91,15 +111,52 @@ export default function App() {
     } catch {}
   }, [tweaks, ready, persistenceMode]);
 
-  const updateCompany = useCallback((id, patch) => {
-    setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
-    api.updateCompany(id, patch).catch(logError('updateCompany'));
+  // Mirror of companies for side-effects that need the "before" state
+  // without re-running when React strict-mode invokes setState updaters twice.
+  const companiesRef = useRef([]);
+  useEffect(() => {
+    companiesRef.current = companies;
+  }, [companies]);
+
+  // Auto-emit structured events for newly-checked status boxes. The event
+  // log is the source of truth for AI analytics — the more the checkbox
+  // interactions feed into it, the richer the data without extra work.
+  const autoEmitStatusEvents = useCallback((id, beforeStatuses, afterStatuses) => {
+    if (!Array.isArray(beforeStatuses) || !Array.isArray(afterStatuses)) return;
+    afterStatuses.forEach((s, i) => {
+      const wasChecked = Boolean(beforeStatuses[i]?.checked);
+      if (s.checked && !wasChecked) {
+        const ev = statusToEvent(s.label);
+        if (ev) {
+          api
+            .createEvent(id, { ...ev, notes: `Status "${s.label}" checked` })
+            .catch(logError('auto-emit event'));
+        }
+      }
+    });
   }, []);
 
-  const replaceCompany = useCallback((updated) => {
-    setCompanies((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-    api.updateCompany(updated.id, updated).catch(logError('replaceCompany'));
-  }, []);
+  const updateCompany = useCallback(
+    (id, patch) => {
+      if (patch.statuses) {
+        const before = companiesRef.current.find((c) => c.id === id);
+        if (before) autoEmitStatusEvents(id, before.statuses, patch.statuses);
+      }
+      setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+      api.updateCompany(id, patch).catch(logError('updateCompany'));
+    },
+    [autoEmitStatusEvents]
+  );
+
+  const replaceCompany = useCallback(
+    (updated) => {
+      const before = companiesRef.current.find((c) => c.id === updated.id);
+      if (before) autoEmitStatusEvents(updated.id, before.statuses, updated.statuses);
+      setCompanies((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      api.updateCompany(updated.id, updated).catch(logError('replaceCompany'));
+    },
+    [autoEmitStatusEvents]
+  );
 
   // Fire-and-forget GitHub sync. Runs AFTER the DB write returns, so the
   // tracker UI doesn't wait for GitHub at all. If it fails the tracker row
