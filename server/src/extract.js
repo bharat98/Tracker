@@ -142,6 +142,50 @@ function extractOgTags(html) {
   };
 }
 
+// Fast-path: try to extract company + role from OG tags alone, no LLM needed.
+// Handles the most common patterns across LinkedIn, Greenhouse, Lever, direct
+// career pages (e.g. "Software Engineer at Google | LinkedIn",
+// "Customer Onboarding Manager III | ZoomInfo", "TAM - Salesforce").
+function parseFromOgTags({ ogTitle, ogSiteName }) {
+  if (!ogTitle) return null;
+
+  let role = '';
+  let company = '';
+
+  // Pattern: "Role at Company" or "Role at Company | Site"
+  const atMatch = ogTitle.match(/^(.+?)\s+at\s+([^|]+?)(?:\s*\|.*)?$/i);
+  if (atMatch) {
+    role = atMatch[1].trim();
+    company = atMatch[2].trim();
+    if (role && company) return { role, company };
+  }
+
+  // Pattern: "Role | Company" or "Role - Company"
+  const sepMatch = ogTitle.match(/^(.+?)\s*[|\-–—]\s*(.+)$/);
+  if (sepMatch) {
+    const left = sepMatch[1].trim();
+    const right = sepMatch[2].trim();
+    // If og:site_name matches one side, the other side is likely the role
+    if (ogSiteName) {
+      const siteNorm = ogSiteName.toLowerCase();
+      if (right.toLowerCase().includes(siteNorm) || siteNorm.includes(right.toLowerCase())) {
+        // right is the site name — left is "Role" and site is the company
+        return { role: left, company: ogSiteName };
+      }
+      if (left.toLowerCase().includes(siteNorm) || siteNorm.includes(left.toLowerCase())) {
+        return { role: right, company: ogSiteName };
+      }
+    }
+    // No site match — treat left as role, right as company (most common)
+    return { role: left, company: right };
+  }
+
+  // Title is just a plain string — use it as role; company from ogSiteName if present
+  if (ogSiteName) return { role: ogTitle, company: ogSiteName };
+
+  return null;
+}
+
 function htmlToText(html) {
   // Remove scripts, styles, head (prompt-injection hygiene), then collapse tags.
   return html
@@ -307,6 +351,19 @@ export async function extractJob(rawUrl) {
   const html = await fetchPage(url);
   const og = extractOgTags(html);
   const text = htmlToText(html);
+
+  // Fast-path: if OG tags already give us both fields, skip the LLM entirely.
+  const fromOg = parseFromOgTags(og);
+  if (fromOg?.company && fromOg?.role) {
+    console.log('[extract] OG fast-path hit — skipping LLM');
+    return {
+      company: fromOg.company,
+      role: fromOg.role,
+      sourceUrl: url.toString(),
+      sourceText: text.slice(0, MAX_SOURCE_TEXT),
+    };
+  }
+
   const { company, role } = await callOpenRouter({ ...og, text, url: url.toString() });
   return {
     company,

@@ -24,7 +24,8 @@ db.exec(`
     position    INTEGER NOT NULL,
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL,
-    source_url  TEXT NOT NULL DEFAULT ''
+    source_url  TEXT NOT NULL DEFAULT '',
+    pipeline    TEXT NOT NULL DEFAULT 'ongoing'
   );
   CREATE TABLE IF NOT EXISTS tweaks (
     key   TEXT PRIMARY KEY,
@@ -32,10 +33,13 @@ db.exec(`
   );
 `);
 
-// Migration for databases created before source_url existed.
+// Migrations for columns added after initial schema.
 const cols = db.prepare('PRAGMA table_info(companies)').all();
 if (!cols.some((c) => c.name === 'source_url')) {
   db.exec(`ALTER TABLE companies ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`);
+}
+if (!cols.some((c) => c.name === 'pipeline')) {
+  db.exec(`ALTER TABLE companies ADD COLUMN pipeline TEXT NOT NULL DEFAULT 'ongoing'`);
 }
 
 const defStatuses = () =>
@@ -99,6 +103,7 @@ const parseRow = (row) => ({
   notes: row.notes,
   position: row.position,
   sourceUrl: row.source_url || '',
+  pipeline: row.pipeline || 'ongoing',
 });
 
 // --- Public API (used by HTTP routes today; MCP server tomorrow) ---
@@ -120,8 +125,8 @@ export function createCompany(input) {
   const position = (maxRow?.max ?? -1) + 1;
   const id = input.id || uid();
   db.prepare(
-    `INSERT INTO companies (id, name, role, statuses, next_steps, blockers, notes, position, created_at, updated_at, source_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO companies (id, name, role, statuses, next_steps, blockers, notes, position, created_at, updated_at, source_url, pipeline)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.name || '',
@@ -133,7 +138,8 @@ export function createCompany(input) {
     position,
     now,
     now,
-    input.sourceUrl || ''
+    input.sourceUrl || '',
+    input.pipeline === 'rejected' ? 'rejected' : 'ongoing'
   );
   return getCompany(id);
 }
@@ -147,6 +153,7 @@ const FIELD_MAP = {
   notes: 'notes',
   position: 'position',
   sourceUrl: 'source_url',
+  pipeline: 'pipeline',
 };
 const JSON_FIELDS = new Set(['statuses', 'nextSteps']);
 
