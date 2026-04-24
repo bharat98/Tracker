@@ -72,3 +72,7 @@ export const setTweaks = (patch) => request('PUT', '/tweaks', patch);
 
 export const nlLog = (text) => request('POST', '/ai/nl-log', { text });
 export const nlLogCommit = (parsed) => request('POST', '/ai/nl-log/commit', { parsed });
+
+export const listContacts  = (companyId)             => request('GET',    `/companies/${companyId}/contacts`);
+export const createContact = (companyId, contact)    => request('POST',   `/companies/${companyId}/contacts`, contact);
+export const deleteContact = (companyId, contactId)  => request('DELETE', `/companies/${companyId}/contacts/${contactId}`);

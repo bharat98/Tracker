@@ -60,9 +60,23 @@ db.exec(`
     created_at   INTEGER NOT NULL,
     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS contacts (
+    id           TEXT PRIMARY KEY,
+    company_id   TEXT NOT NULL,
+    role         TEXT NOT NULL DEFAULT 'other',
+    title        TEXT NOT NULL DEFAULT '',
+    first_name   TEXT NOT NULL DEFAULT '',
+    last_name    TEXT NOT NULL DEFAULT '',
+    linkedin_url TEXT NOT NULL DEFAULT '',
+    email        TEXT NOT NULL DEFAULT '',
+    notes        TEXT NOT NULL DEFAULT '',
+    created_at   INTEGER NOT NULL,
+    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+  );
   CREATE INDEX IF NOT EXISTS idx_events_company ON events(company_id);
   CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
   CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
+  CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company_id);
 `);
 
 // Migrations for columns added after initial schema. Each block is
@@ -80,6 +94,26 @@ if (!has('recruiter_name')) db.exec(`ALTER TABLE companies ADD COLUMN recruiter_
 if (!has('recruiter_company')) db.exec(`ALTER TABLE companies ADD COLUMN recruiter_company TEXT NOT NULL DEFAULT ''`);
 if (!has('current_stage')) db.exec(`ALTER TABLE companies ADD COLUMN current_stage TEXT NOT NULL DEFAULT 'sourced'`);
 if (!has('resume_version')) db.exec(`ALTER TABLE companies ADD COLUMN resume_version TEXT NOT NULL DEFAULT ''`);
+
+// One-time migration: copy flat contact columns → contacts table
+const contactsMigrated = db.prepare("SELECT value FROM tweaks WHERE key = 'contacts_migrated_v1'").get();
+if (!contactsMigrated) {
+  const allRows = db.prepare('SELECT id, hm_name, recruiter_name, recruiter_company, referral_name, referral_relationship FROM companies').all();
+  const insertC = db.prepare(
+    `INSERT INTO contacts (id, company_id, role, title, first_name, last_name, linkedin_url, email, notes, created_at)
+     VALUES (?, ?, ?, '', ?, '', '', '', ?, ?)`
+  );
+  const runMigration = db.transaction(() => {
+    const now = Date.now();
+    for (const c of allRows) {
+      if (c.hm_name?.trim())        insertC.run(uid(), c.id, 'hiring_manager', c.hm_name.trim(),       '',                       now);
+      if (c.recruiter_name?.trim()) insertC.run(uid(), c.id, 'recruiter',      c.recruiter_name.trim(), c.recruiter_company || '', now);
+      if (c.referral_name?.trim())  insertC.run(uid(), c.id, 'referral',       c.referral_name.trim(),  c.referral_relationship || '', now);
+    }
+    db.prepare("INSERT OR REPLACE INTO tweaks (key, value) VALUES ('contacts_migrated_v1', '1')").run();
+  });
+  runMigration();
+}
 
 // ──────────────────────────────────────────────────────────────────
 // Seed data (only on a fresh DB)
@@ -380,4 +414,52 @@ export function setTweaks(patch) {
 
 export function dbPath() {
   return DB_PATH;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Contacts: public API
+// ──────────────────────────────────────────────────────────────────
+const parseContact = (row) => ({
+  id:          row.id,
+  companyId:   row.company_id,
+  role:        row.role        || 'other',
+  title:       row.title       || '',
+  firstName:   row.first_name  || '',
+  lastName:    row.last_name   || '',
+  linkedinUrl: row.linkedin_url || '',
+  email:       row.email       || '',
+  notes:       row.notes       || '',
+  createdAt:   row.created_at,
+});
+
+export function listContacts(companyId) {
+  return db
+    .prepare('SELECT * FROM contacts WHERE company_id = ? ORDER BY created_at ASC')
+    .all(companyId)
+    .map(parseContact);
+}
+
+export function createContact(input) {
+  const now = Date.now();
+  const id  = input.id || uid();
+  db.prepare(
+    `INSERT INTO contacts (id, company_id, role, title, first_name, last_name, linkedin_url, email, notes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    input.companyId,
+    input.role        || 'other',
+    input.title       || '',
+    input.firstName   || '',
+    input.lastName    || '',
+    input.linkedinUrl || '',
+    input.email       || '',
+    input.notes       || '',
+    now
+  );
+  return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
+}
+
+export function deleteContact(id) {
+  db.prepare('DELETE FROM contacts WHERE id = ?').run(id);
 }

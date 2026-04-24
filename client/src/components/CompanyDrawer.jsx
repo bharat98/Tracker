@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { X, Trash2 } from 'lucide-react';
-import { C } from '../theme.js';
 import EventLog from './EventLog.jsx';
 import NextStepsTree from './NextStepsTree.jsx';
+import * as api from '../api.js';
 
 const STAGE_OPTIONS = [
   { value: 'sourced',       label: 'Sourced' },
@@ -48,30 +48,19 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
 
   const [tab, setTab] = useState('overview');
 
-  // Editable fields — initialised from the company object whenever companyId changes.
-  const [name, setName]       = useState('');
-  const [role, setRole]       = useState('');
-  const [stage, setStage]     = useState('sourced');
+  const [name, setName]         = useState('');
+  const [role, setRole]         = useState('');
+  const [stage, setStage]       = useState('sourced');
   const [pipeline, setPipeline] = useState('ongoing');
 
-  // Overview tab
-  const [statuses, setStatuses]   = useState([]);
+  const [statuses,  setStatuses]  = useState([]);
   const [nextSteps, setNextSteps] = useState([]);
-  const [blockers, setBlockers]   = useState('');
+  const [blockers,  setBlockers]  = useState('');
 
-  // Contacts tab
-  const [hmName, setHmName]                     = useState('');
-  const [hmContacted, setHmContacted]           = useState(false);
-  const [recruiterName, setRecruiterName]       = useState('');
-  const [recruiterCompany, setRecruiterCompany] = useState('');
-  const [referralName, setReferralName]         = useState('');
-  const [referralRel, setReferralRel]           = useState('');
-
-  // Notes tab
-  const [notes, setNotes]               = useState('');
-  const [channel, setChannel]           = useState('');
+  const [notes,         setNotes]         = useState('');
+  const [channel,       setChannel]       = useState('');
   const [resumeVersion, setResumeVersion] = useState('');
-  const [sourceUrl, setSourceUrl]       = useState('');
+  const [sourceUrl,     setSourceUrl]     = useState('');
 
   useEffect(() => {
     if (!company) return;
@@ -83,12 +72,6 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
     setStatuses(company.statuses || []);
     setNextSteps(company.nextSteps || []);
     setBlockers(company.blockers || '');
-    setHmName(company.hmName || '');
-    setHmContacted(Boolean(company.hmContactedDirectly));
-    setRecruiterName(company.recruiterName || '');
-    setRecruiterCompany(company.recruiterCompany || '');
-    setReferralName(company.referralName || '');
-    setReferralRel(company.referralRelationship || '');
     setNotes(company.notes || '');
     setChannel(company.channel || '');
     setResumeVersion(company.resumeVersion || '');
@@ -100,23 +83,17 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
   const handleSave = () => {
     onSave({
       ...company,
-      name:               name.trim() || company.name,
-      role:               role.trim(),
-      currentStage:       stage,
+      name:         name.trim() || company.name,
+      role:         role.trim(),
+      currentStage: stage,
       pipeline,
       statuses,
       nextSteps,
       blockers,
-      hmName:             hmName.trim(),
-      hmContactedDirectly: hmContacted,
-      recruiterName:      recruiterName.trim(),
-      recruiterCompany:   recruiterCompany.trim(),
-      referralName:       referralName.trim(),
-      referralRelationship: referralRel.trim(),
       notes,
       channel,
-      resumeVersion:      resumeVersion.trim(),
-      sourceUrl:          sourceUrl.trim(),
+      resumeVersion: resumeVersion.trim(),
+      sourceUrl:     sourceUrl.trim(),
     }, {});
   };
 
@@ -231,14 +208,7 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
             />
           )}
           {tab === 'contacts' && (
-            <ContactsTab
-              hmName={hmName} setHmName={setHmName}
-              hmContacted={hmContacted} setHmContacted={setHmContacted}
-              recruiterName={recruiterName} setRecruiterName={setRecruiterName}
-              recruiterCompany={recruiterCompany} setRecruiterCompany={setRecruiterCompany}
-              referralName={referralName} setReferralName={setReferralName}
-              referralRel={referralRel} setReferralRel={setReferralRel}
-            />
+            <ContactsTab companyId={company.id} />
           )}
           {tab === 'activity' && (
             <EventLog companyId={company.id} />
@@ -310,88 +280,172 @@ function OverviewTab({ statuses, nextSteps, blockers, onToggleStatus, onNextStep
   );
 }
 
-function ContactCard({ title, pill, pillClass, children }) {
-  return (
-    <div className="card" style={{ padding: '1rem 1.1rem', marginBottom: '0.75rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-        <div className="label">{title}</div>
-        <span className={`pill ${pillClass}`}>{pill}</span>
-      </div>
-      {children}
-    </div>
-  );
-}
+// ── Contacts tab — reads/writes the contacts table via API ────────────────────
 
-function ContactsTab({
-  hmName, setHmName, hmContacted, setHmContacted,
-  recruiterName, setRecruiterName, recruiterCompany, setRecruiterCompany,
-  referralName, setReferralName, referralRel, setReferralRel,
-}) {
-  const inputStyle = { marginBottom: '0.5rem' };
+const SECTION_CONFIG = [
+  { role: 'hiring_manager', title: 'Hiring Manager', pill: 'HM',  pillClass: 'pill-hm' },
+  { role: 'recruiter',      title: 'Recruiter',      pill: 'REC', pillClass: 'pill-recruiter', notesLabel: 'Firm / agency' },
+  { role: 'referral',       title: 'Referral',       pill: 'REF', pillClass: 'pill-referral',  notesLabel: 'Relationship' },
+  { role: 'other',          title: 'Other',          showTitle: true },
+];
 
-  const anyContact = hmName || recruiterName || referralName;
+function ContactsTab({ companyId }) {
+  const [contacts,   setContacts]   = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [addingRole, setAddingRole] = useState(null);
+  const [draft,      setDraft]      = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.listContacts(companyId)
+      .then((cs) => { if (!cancelled) { setContacts(cs); setLoading(false); } })
+      .catch(()  => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [companyId]);
+
+  const startAdding = (role) => {
+    setAddingRole(role);
+    setDraft(
+      role === 'recruiter' ? { firstName: '', lastName: '', linkedinUrl: '', email: '', notes: '' }
+      : role === 'other'   ? { title: '', firstName: '', lastName: '', linkedinUrl: '', email: '' }
+      : { firstName: '', lastName: '', linkedinUrl: '', email: '' }
+    );
+  };
+
+  const cancelAdding = () => { setAddingRole(null); setDraft({}); };
+
+  const saveContact = async () => {
+    const empty = !draft.firstName && !draft.lastName && !draft.linkedinUrl && !draft.email && !draft.title;
+    if (empty) { cancelAdding(); return; }
+    try {
+      const created = await api.createContact(companyId, { ...draft, role: addingRole });
+      setContacts((prev) => [...prev, created]);
+      cancelAdding();
+    } catch (e) { console.error('save contact failed', e); }
+  };
+
+  const removeContact = async (id) => {
+    try {
+      await api.deleteContact(companyId, id);
+      setContacts((prev) => prev.filter((c) => c.id !== id));
+    } catch (e) { console.error('delete contact failed', e); }
+  };
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', padding: '1rem 0' }}>Loading…</div>;
+  }
+
+  const byRole = (role) => contacts.filter((c) => c.role === role);
+  const total  = contacts.length;
 
   return (
     <div>
-      {!anyContact && (
+      {total === 0 && !addingRole && (
         <div style={{ padding: '2rem 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
           <div className="font-serif" style={{ fontSize: '1.3rem', color: 'var(--text)', marginBottom: '0.4rem', fontWeight: 300 }}>
             No contacts yet
           </div>
-          Fill in the hiring manager, recruiter, or referral below.
+          Click + to add a hiring manager, recruiter, or referral.
         </div>
       )}
 
-      <ContactCard title="Hiring Manager" pill="HM" pillClass="pill-hm">
-        <input
-          value={hmName}
-          onChange={(e) => setHmName(e.target.value)}
-          className="input"
-          placeholder="Name"
-          style={inputStyle}
+      {SECTION_CONFIG.map((sec) => (
+        <ContactSection
+          key={sec.role}
+          sec={sec}
+          contacts={byRole(sec.role)}
+          isAdding={addingRole === sec.role}
+          draft={draft}
+          onStartAdd={() => startAdding(sec.role)}
+          onDraftChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
+          onSave={saveContact}
+          onCancel={cancelAdding}
+          onDelete={removeContact}
         />
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={hmContacted}
-            onChange={(e) => setHmContacted(e.target.checked)}
-            style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
-          />
-          Contacted directly
-        </label>
-      </ContactCard>
+      ))}
+    </div>
+  );
+}
 
-      <ContactCard title="Recruiter" pill="REC" pillClass="pill-recruiter">
-        <input
-          value={recruiterName}
-          onChange={(e) => setRecruiterName(e.target.value)}
-          className="input"
-          placeholder="Name"
-          style={inputStyle}
-        />
-        <input
-          value={recruiterCompany}
-          onChange={(e) => setRecruiterCompany(e.target.value)}
-          className="input"
-          placeholder="Agency / firm"
-        />
-      </ContactCard>
+function ContactSection({ sec, contacts, isAdding, draft, onStartAdd, onDraftChange, onSave, onCancel, onDelete }) {
+  const hasContent = contacts.length > 0 || isAdding;
+  return (
+    <div className="card" style={{ padding: '1rem 1.1rem', marginBottom: '0.75rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hasContent ? '0.75rem' : 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <div className="label">{sec.title}</div>
+          {sec.pill && <span className={`pill ${sec.pillClass}`}>{sec.pill}</span>}
+        </div>
+        {!isAdding && (
+          <button className="btn btn-ghost" onClick={onStartAdd} style={{ padding: '0.2rem 0.5rem', fontSize: '0.78rem' }}>
+            + Add
+          </button>
+        )}
+      </div>
 
-      <ContactCard title="Referral" pill="REF" pillClass="pill-referral">
-        <input
-          value={referralName}
-          onChange={(e) => setReferralName(e.target.value)}
-          className="input"
-          placeholder="Name of referrer"
-          style={inputStyle}
-        />
-        <input
-          value={referralRel}
-          onChange={(e) => setReferralRel(e.target.value)}
-          className="input"
-          placeholder="Relationship (ex-coworker, friend…)"
-        />
-      </ContactCard>
+      {contacts.map((c) => <ContactRow key={c.id} contact={c} sec={sec} onDelete={onDelete} />)}
+
+      {isAdding && (
+        <div style={{ paddingTop: contacts.length ? '0.75rem' : 0, borderTop: contacts.length ? '1px solid var(--divider)' : 'none' }}>
+          {sec.showTitle && (
+            <input
+              className="input"
+              placeholder="Title / role (e.g. Engineering Manager)"
+              value={draft.title || ''}
+              onChange={(e) => onDraftChange({ title: e.target.value })}
+              style={{ marginBottom: '0.5rem' }}
+            />
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <input className="input" placeholder="First name" value={draft.firstName || ''} onChange={(e) => onDraftChange({ firstName: e.target.value })} />
+            <input className="input" placeholder="Last name"  value={draft.lastName  || ''} onChange={(e) => onDraftChange({ lastName:  e.target.value })} />
+          </div>
+          <input className="input" placeholder="LinkedIn URL"     value={draft.linkedinUrl || ''} onChange={(e) => onDraftChange({ linkedinUrl: e.target.value })} style={{ marginBottom: '0.5rem' }} />
+          <input className="input" placeholder="Email (optional)" value={draft.email       || ''} onChange={(e) => onDraftChange({ email:       e.target.value })} style={{ marginBottom: sec.notesLabel ? '0.5rem' : '0.25rem' }} />
+          {sec.notesLabel && (
+            <input className="input" placeholder={sec.notesLabel} value={draft.notes || ''} onChange={(e) => onDraftChange({ notes: e.target.value })} style={{ marginBottom: '0.25rem' }} />
+          )}
+          <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+            <button className="btn btn-ghost"    onClick={onCancel} style={{ fontSize: '0.82rem' }}>Cancel</button>
+            <button className="btn btn-primary"  onClick={onSave}   style={{ fontSize: '0.82rem' }}>Save</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContactRow({ contact, sec, onDelete }) {
+  const displayName = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || '(no name)';
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '0.5rem 0', borderBottom: '1px solid var(--divider)' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {sec.showTitle && contact.title && (
+          <div className="label" style={{ marginBottom: '0.15rem' }}>{contact.title}</div>
+        )}
+        <div style={{ fontWeight: 500, fontSize: '0.9rem' }}>{displayName}</div>
+        {contact.linkedinUrl && (
+          <a href={contact.linkedinUrl} target="_blank" rel="noreferrer"
+            style={{ fontSize: '0.8rem', color: 'var(--accent)', display: 'block' }}>
+            LinkedIn ↗
+          </a>
+        )}
+        {contact.email && (
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{contact.email}</div>
+        )}
+        {contact.notes && (
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>
+            {sec.notesLabel ? `${sec.notesLabel}: ` : ''}{contact.notes}
+          </div>
+        )}
+      </div>
+      <button
+        onClick={() => onDelete(contact.id)}
+        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.2rem', flexShrink: 0 }}
+      >
+        <X size={13} />
+      </button>
     </div>
   );
 }

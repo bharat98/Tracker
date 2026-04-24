@@ -14,6 +14,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import CompanyDrawer from '../components/CompanyDrawer.jsx';
+import NetworkingModal from '../components/NetworkingModal.jsx';
 import * as api from '../api.js';
 
 const STAGE_COLUMNS = [
@@ -156,10 +157,12 @@ const collisionDetection = (args) => {
 };
 
 function KanbanView({ rows, onOpen, onDelete, onSave }) {
-  const [colItems, setColItems] = useState(() => groupByColumn(rows));
-  const [activeId, setActiveId] = useState(null);
-  const dragging = useRef(false);
-  const origColRef = useRef(null); // stable origCol captured at drag start
+  const [colItems, setColItems]         = useState(() => groupByColumn(rows));
+  const [activeId, setActiveId]         = useState(null);
+  const [networkingModal, setNetworkingModal] = useState({ open: false, company: null });
+  const dragging      = useRef(false);
+  const origColRef    = useRef(null); // stable origCol captured at drag start
+  const pendingMoveRef = useRef(null); // deferred onSave call while modal is open
 
   // Sync from parent when rows change, but not while a drag is in progress
   useEffect(() => {
@@ -188,7 +191,6 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
   const handleDragOver = ({ active, over }) => {
     if (!over) return;
     const srcCol = findCol(active.id);
-    // over.id is either a column key (from useDroppable) or a card id (from useSortable)
     const destCol = STAGE_COLUMNS.some((c) => c.key === over.id) ? over.id : findCol(over.id);
     if (!srcCol || !destCol || srcCol === destCol) return;
 
@@ -196,20 +198,20 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
     if (!card) return;
 
     setColItems((prev) => {
-      const srcItems = prev[srcCol].filter((c) => c.id !== active.id);
+      const srcItems  = prev[srcCol].filter((c) => c.id !== active.id);
       const destItems = [...prev[destCol]];
-      const overIdx = destItems.findIndex((c) => c.id === over.id);
+      const overIdx   = destItems.findIndex((c) => c.id === over.id);
       destItems.splice(overIdx >= 0 ? overIdx : destItems.length, 0, card);
       return { ...prev, [srcCol]: srcItems, [destCol]: destItems };
     });
   };
 
-  const handleDragEnd = ({ active, over }) => {
+  const handleDragEnd = async ({ active, over }) => {
     dragging.current = false;
     setActiveId(null);
 
     if (!over) {
-      setColItems(groupByColumn(rows)); // snap back
+      setColItems(groupByColumn(rows));
       return;
     }
 
@@ -217,9 +219,29 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
     if (!currentCol) return;
 
     if (currentCol !== origColRef.current) {
-      // Cross-column: persist the stage change
       const company = rows.find((c) => c.id === active.id);
-      if (company) onSave({ ...company, currentStage: currentCol }, {});
+      if (!company) return;
+
+      // sourced → networked: check if key contacts exist before committing
+      if (origColRef.current === 'sourced' && currentCol === 'networked') {
+        try {
+          const contacts = await api.listContacts(company.id);
+          const hasKeyContact = contacts.some(
+            (c) => c.role === 'hiring_manager' || c.role === 'recruiter'
+          );
+          if (hasKeyContact) {
+            onSave({ ...company, currentStage: 'networked' }, {});
+          } else {
+            pendingMoveRef.current = () => onSave({ ...company, currentStage: 'networked' }, {});
+            setNetworkingModal({ open: true, company });
+          }
+        } catch {
+          onSave({ ...company, currentStage: 'networked' }, {});
+        }
+        return;
+      }
+
+      onSave({ ...company, currentStage: currentCol }, {});
     } else {
       // Same-column: check if position changed and persist reorder
       const overCol = STAGE_COLUMNS.some((c) => c.key === over.id) ? over.id : findCol(over.id);
@@ -236,6 +258,24 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
         }
       }
     }
+  };
+
+  const handleNetworkingClose = () => {
+    pendingMoveRef.current = null;
+    setNetworkingModal({ open: false, company: null });
+    setColItems(groupByColumn(rows)); // revert card to sourced
+  };
+
+  const handleNetworkingSkip = () => {
+    pendingMoveRef.current?.();
+    pendingMoveRef.current = null;
+    setNetworkingModal({ open: false, company: null });
+  };
+
+  const handleNetworkingMove = () => {
+    pendingMoveRef.current?.();
+    pendingMoveRef.current = null;
+    setNetworkingModal({ open: false, company: null });
   };
 
   const activeCompany = activeId ? rows.find((c) => c.id === activeId) : null;
@@ -271,6 +311,14 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
       <DragOverlay dropAnimation={{ duration: 150 }}>
         {activeCompany && <KanbanCardGhost company={activeCompany} />}
       </DragOverlay>
+
+      <NetworkingModal
+        open={networkingModal.open}
+        company={networkingModal.company}
+        onClose={handleNetworkingClose}
+        onSkip={handleNetworkingSkip}
+        onMove={handleNetworkingMove}
+      />
     </DndContext>
   );
 }

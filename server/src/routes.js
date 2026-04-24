@@ -110,6 +110,42 @@ routes.delete('/events/:id', (req, res) => {
   res.status(204).end();
 });
 
+// ── Contacts ─────────────────────────────────────────────────────────────────
+// Helper: after any contact write/delete, keep the legacy flat columns in sync
+// so kanban card pills (which read from the company row) stay accurate.
+function syncFlatContactCols(companyId) {
+  const contacts = db.listContacts(companyId);
+  const hm  = contacts.find((c) => c.role === 'hiring_manager');
+  const rec = contacts.find((c) => c.role === 'recruiter');
+  const ref = contacts.find((c) => c.role === 'referral');
+  const name = (c) => [c?.firstName, c?.lastName].filter(Boolean).join(' ');
+  db.updateCompany(companyId, {
+    hmName:               name(hm),
+    recruiterName:        name(rec),
+    recruiterCompany:     rec?.notes || '',
+    referralName:         name(ref),
+    referralRelationship: ref?.notes || '',
+  });
+}
+
+routes.get('/companies/:id/contacts', (req, res) => {
+  if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });
+  res.json(db.listContacts(req.params.id));
+});
+
+routes.post('/companies/:id/contacts', (req, res) => {
+  if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });
+  const contact = db.createContact({ ...(req.body || {}), companyId: req.params.id });
+  syncFlatContactCols(req.params.id);
+  res.status(201).json(contact);
+});
+
+routes.delete('/companies/:id/contacts/:contactId', (req, res) => {
+  db.deleteContact(req.params.contactId);
+  syncFlatContactCols(req.params.id);
+  res.status(204).end();
+});
+
 routes.get('/tweaks', (req, res) => {
   res.json(db.getTweaks());
 });
