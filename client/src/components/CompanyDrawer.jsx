@@ -57,10 +57,9 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
   const [nextSteps, setNextSteps] = useState([]);
   const [blockers,  setBlockers]  = useState('');
 
-  const [notes,         setNotes]         = useState('');
-  const [channel,       setChannel]       = useState('');
-  const [resumeVersion, setResumeVersion] = useState('');
-  const [sourceUrl,     setSourceUrl]     = useState('');
+  const [notes,     setNotes]     = useState('');
+  const [channel,   setChannel]   = useState('');
+  const [sourceUrl, setSourceUrl] = useState('');
 
   useEffect(() => {
     if (!company) return;
@@ -74,7 +73,6 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
     setBlockers(company.blockers || '');
     setNotes(company.notes || '');
     setChannel(company.channel || '');
-    setResumeVersion(company.resumeVersion || '');
     setSourceUrl(company.sourceUrl || '');
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -92,8 +90,7 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
       blockers,
       notes,
       channel,
-      resumeVersion: resumeVersion.trim(),
-      sourceUrl:     sourceUrl.trim(),
+      sourceUrl: sourceUrl.trim(),
     }, {});
   };
 
@@ -169,6 +166,13 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
                 job ↗
               </a>
             )}
+            {company.resumeLink && (
+              <a href={company.resumeLink} target="_blank" rel="noreferrer"
+                className="btn btn-ghost"
+                style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem' }}>
+                resume ↗
+              </a>
+            )}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem' }}>
               <button className="btn btn-danger" onClick={handleDelete} style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}>
                 <Trash2 size={13} />
@@ -217,7 +221,6 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
             <NotesTab
               notes={notes} setNotes={setNotes}
               channel={channel} setChannel={setChannel}
-              resumeVersion={resumeVersion} setResumeVersion={setResumeVersion}
               sourceUrl={sourceUrl} setSourceUrl={setSourceUrl}
               channelOptions={CHANNEL_OPTIONS}
             />
@@ -450,7 +453,7 @@ function ContactRow({ contact, sec, onDelete }) {
   );
 }
 
-function NotesTab({ notes, setNotes, channel, setChannel, resumeVersion, setResumeVersion, sourceUrl, setSourceUrl, channelOptions }) {
+function NotesTab({ notes, setNotes, channel, setChannel, sourceUrl, setSourceUrl, channelOptions }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div>
@@ -464,24 +467,13 @@ function NotesTab({ notes, setNotes, channel, setChannel, resumeVersion, setResu
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-        <div>
-          <SectionLabel>Channel</SectionLabel>
-          <select value={channel} onChange={(e) => setChannel(e.target.value)} className="select">
-            {channelOptions.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <SectionLabel>Resume version</SectionLabel>
-          <input
-            value={resumeVersion}
-            onChange={(e) => setResumeVersion(e.target.value)}
-            className="input"
-            placeholder="e.g. v3-TAM-focus"
-          />
-        </div>
+      <div>
+        <SectionLabel>Channel</SectionLabel>
+        <select value={channel} onChange={(e) => setChannel(e.target.value)} className="select">
+          {channelOptions.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
       </div>
 
       <div>

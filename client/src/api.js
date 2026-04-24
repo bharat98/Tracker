@@ -76,3 +76,18 @@ export const nlLogCommit = (parsed) => request('POST', '/ai/nl-log/commit', { pa
 export const listContacts  = (companyId)             => request('GET',    `/companies/${companyId}/contacts`);
 export const createContact = (companyId, contact)    => request('POST',   `/companies/${companyId}/contacts`, contact);
 export const deleteContact = (companyId, contactId)  => request('DELETE', `/companies/${companyId}/contacts/${contactId}`);
+
+export async function uploadResume(companyId, file) {
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  const res = await fetch(`${BASE}/companies/${companyId}/resume`, { method: 'POST', body: fd });
+  if (!res.ok) {
+    let parsed = null;
+    const text = await res.text().catch(() => '');
+    try { parsed = JSON.parse(text); } catch {}
+    const err = new Error(parsed?.error || `Upload → ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}

@@ -58,7 +58,6 @@ export default function CompanyDetail({
   const [recruiterName, setRecruiterName] = useState(company.recruiterName || '');
   const [recruiterCompany, setRecruiterCompany] = useState(company.recruiterCompany || '');
   const [currentStage, setCurrentStage] = useState(company.currentStage || 'sourced');
-  const [resumeVersion, setResumeVersion] = useState(company.resumeVersion || '');
 
   const [jobUrl, setJobUrl] = useState('');
   const [fetching, setFetching] = useState(false);
@@ -129,7 +128,6 @@ export default function CompanyDetail({
       recruiterName: recruiterName.trim(),
       recruiterCompany: recruiterCompany.trim(),
       currentStage,
-      resumeVersion: resumeVersion.trim(),
     };
     onSave(persistedCompany, { sourceText });
     onBack();
@@ -551,33 +549,20 @@ export default function CompanyDetail({
             </div>
           </div>
 
-          <div
-            style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}
-          >
-            <div>
-              <div style={sectionTitle}>Referral</div>
-              <input
-                value={referralName}
-                onChange={(e) => setReferralName(e.target.value)}
-                placeholder="Name of referrer"
-                style={inputStyle}
-              />
-              <input
-                value={referralRelationship}
-                onChange={(e) => setReferralRelationship(e.target.value)}
-                placeholder="Relationship (ex-coworker, friend)"
-                style={{ ...inputStyle, marginTop: 6 }}
-              />
-            </div>
-            <div>
-              <div style={sectionTitle}>Resume Version</div>
-              <input
-                value={resumeVersion}
-                onChange={(e) => setResumeVersion(e.target.value)}
-                placeholder="e.g. v3-TAM-focus"
-                style={inputStyle}
-              />
-            </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={sectionTitle}>Referral</div>
+            <input
+              value={referralName}
+              onChange={(e) => setReferralName(e.target.value)}
+              placeholder="Name of referrer"
+              style={inputStyle}
+            />
+            <input
+              value={referralRelationship}
+              onChange={(e) => setReferralRelationship(e.target.value)}
+              placeholder="Relationship (ex-coworker, friend)"
+              style={{ ...inputStyle, marginTop: 6 }}
+            />
           </div>
         </div>
 

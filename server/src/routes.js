@@ -1,9 +1,26 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
+import multer from 'multer';
 import * as db from './db.js';
 import { extractJob } from './extract.js';
 import { parseNlLog, commitNlLog } from './nllog.js';
-import { syncCompany, isConfigured as githubConfigured } from './github.js';
+import { syncCompany, uploadResumeFile, isConfigured as githubConfigured } from './github.js';
+
+// Resume upload: PDF / DOC / DOCX only, 10 MB cap, kept in memory so we can
+// stream the buffer straight to GitHub without touching disk.
+const RESUME_MIMETYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+const resumeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (RESUME_MIMETYPES.has(file.mimetype)) return cb(null, true);
+    cb(Object.assign(new Error('Only PDF, DOC, or DOCX files are allowed.'), { status: 400 }));
+  },
+});
 
 export const routes = Router();
 
@@ -196,6 +213,37 @@ routes.post('/github/sync', syncLimiter, async (req, res) => {
   } catch (err) {
     const status = err.status || 500;
     res.status(status).json({ error: err.message || 'GitHub sync failed.' });
+  }
+});
+
+// ── Resume upload ─────────────────────────────────────────────────────────────
+// Fires on the Sourced/Networked → Applied transition. Drops the file as-is
+// (original filename) into the company's existing GitHub folder, and stores
+// the returned URL on the company row so we can skip the modal next time.
+routes.post('/companies/:id/resume', (req, res, next) => {
+  resumeUpload.single('file')(req, res, (err) => {
+    if (err) {
+      const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 400);
+      return res.status(status).json({ error: err.message || 'Upload failed.' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const company = db.getCompany(req.params.id);
+    if (!company) return res.status(404).json({ error: 'Company not found.' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+
+    const { url, path: githubPath } = await uploadResumeFile({
+      company: { name: company.name, role: company.role },
+      filename: req.file.originalname,
+      buffer: req.file.buffer,
+    });
+    db.updateCompany(company.id, { resumeLink: url });
+    res.json({ url, path: githubPath });
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ error: err.message || 'Resume upload failed.' });
   }
 });
 

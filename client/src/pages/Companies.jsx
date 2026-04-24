@@ -15,7 +15,10 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import CompanyDrawer from '../components/CompanyDrawer.jsx';
 import NetworkingModal from '../components/NetworkingModal.jsx';
+import ResumeUploadModal from '../components/ResumeUploadModal.jsx';
 import * as api from '../api.js';
+
+const PRE_APPLIED_COLS = new Set(['sourced', 'networked']);
 
 const STAGE_COLUMNS = [
   { key: 'sourced',      label: 'Sourced' },
@@ -160,6 +163,7 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
   const [colItems, setColItems]         = useState(() => groupByColumn(rows));
   const [activeId, setActiveId]         = useState(null);
   const [networkingModal, setNetworkingModal] = useState({ open: false, company: null });
+  const [resumeModal,     setResumeModal]     = useState({ open: false, company: null });
   const dragging      = useRef(false);
   const origColRef    = useRef(null); // stable origCol captured at drag start
   const pendingMoveRef = useRef(null); // deferred onSave call while modal is open
@@ -241,6 +245,14 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
         return;
       }
 
+      // {sourced,networked} → applied: prompt for resume if we haven't stored one yet
+      if (PRE_APPLIED_COLS.has(origColRef.current) && currentCol === 'applied' && !company.resumeLink) {
+        pendingMoveRef.current = (patch = {}) =>
+          onSave({ ...company, currentStage: 'applied', ...patch }, {});
+        setResumeModal({ open: true, company });
+        return;
+      }
+
       onSave({ ...company, currentStage: currentCol }, {});
     } else {
       // Same-column: check if position changed and persist reorder
@@ -276,6 +288,25 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
     pendingMoveRef.current?.();
     pendingMoveRef.current = null;
     setNetworkingModal({ open: false, company: null });
+  };
+
+  const handleResumeClose = () => {
+    pendingMoveRef.current = null;
+    setResumeModal({ open: false, company: null });
+    setColItems(groupByColumn(rows)); // revert card to its original column
+  };
+
+  const handleResumeSkip = () => {
+    pendingMoveRef.current?.();
+    pendingMoveRef.current = null;
+    setResumeModal({ open: false, company: null });
+  };
+
+  // url comes back from the upload; persist it alongside the stage transition
+  const handleResumeMove = (url) => {
+    pendingMoveRef.current?.({ resumeLink: url });
+    pendingMoveRef.current = null;
+    setResumeModal({ open: false, company: null });
   };
 
   const activeCompany = activeId ? rows.find((c) => c.id === activeId) : null;
@@ -318,6 +349,14 @@ function KanbanView({ rows, onOpen, onDelete, onSave }) {
         onClose={handleNetworkingClose}
         onSkip={handleNetworkingSkip}
         onMove={handleNetworkingMove}
+      />
+
+      <ResumeUploadModal
+        open={resumeModal.open}
+        company={resumeModal.company}
+        onClose={handleResumeClose}
+        onSkip={handleResumeSkip}
+        onMove={handleResumeMove}
       />
     </DndContext>
   );

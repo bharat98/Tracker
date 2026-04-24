@@ -74,6 +74,7 @@ async function gh(method, path, { token, body } = {}) {
 
 // Encodes a UTF-8 string to base64 — GitHub wants file content base64-encoded.
 const toBase64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+const bufToBase64 = (buf) => Buffer.from(buf).toString('base64');
 
 // Returns true if a path exists in the configured repo, false if 404.
 // Other statuses (auth errors, rate limit, etc.) throw.
@@ -103,6 +104,20 @@ async function putFile(path, content, message) {
   const body = await res.text().catch(() => '');
   // 422 = file already exists (without sha) — our caller should handle via
   // existence check first, but surface it cleanly just in case.
+  throw Object.assign(
+    new Error(`GitHub ${res.status} writing "${path}": ${body.slice(0, 200)}`),
+    { status: res.status === 401 ? 401 : res.status === 422 ? 409 : 502 }
+  );
+}
+
+async function putBinary(path, buffer, message) {
+  const { token, repo, branch } = getConfig();
+  const res = await gh('PUT', `/repos/${repo}/contents/${encodeURI(path)}`, {
+    token,
+    body: { message, content: bufToBase64(buffer), branch },
+  });
+  if (res.ok) return res.json();
+  const body = await res.text().catch(() => '');
   throw Object.assign(
     new Error(`GitHub ${res.status} writing "${path}": ${body.slice(0, 200)}`),
     { status: res.status === 401 ? 401 : res.status === 422 ? 409 : 502 }
@@ -210,4 +225,65 @@ export async function syncCompany({ company, sourceUrl, sourceText, force = fals
 
 export function isConfigured() {
   return getConfig().configured;
+}
+
+// Append -2, -3, ... before the file extension when the original path is taken.
+function suffixFilename(filename, n) {
+  const dot = filename.lastIndexOf('.');
+  if (dot <= 0) return `${filename}-${n}`;
+  return `${filename.slice(0, dot)}-${n}${filename.slice(dot)}`;
+}
+
+/**
+ * Upload a resume binary into the company's existing folder. The folder must
+ * already exist (we don't auto-create it — that's syncCompany's job). On name
+ * collision, append -2, -3, … before the extension.
+ *
+ * @param {object} args
+ * @param {{name:string, role:string}} args.company
+ * @param {string} args.filename   — original client-provided filename (kept as-is)
+ * @param {Buffer} args.buffer
+ * @returns {Promise<{ url: string, path: string }>}
+ */
+export async function uploadResumeFile({ company, filename, buffer }) {
+  const cfg = getConfig();
+  if (!cfg.configured) {
+    throw Object.assign(new Error(cfg.reason), { status: 503 });
+  }
+
+  const folder = folderName(company.name, company.role);
+  if (!folder) {
+    throw Object.assign(new Error('Company is missing name or role.'), { status: 400 });
+  }
+
+  if (!(await pathExists(folder))) {
+    throw Object.assign(
+      new Error(`Repo folder "${folder}" does not exist. Sync this company to GitHub first.`),
+      { status: 409 }
+    );
+  }
+
+  let chosen = filename;
+  let n = 2;
+  while (await pathExists(`${folder}/${chosen}`)) {
+    if (n >= 100) {
+      throw Object.assign(new Error('Too many filename conflicts.'), { status: 500 });
+    }
+    chosen = suffixFilename(filename, n);
+    n += 1;
+  }
+
+  const targetPath = `${folder}/${chosen}`;
+  const result = await putBinary(
+    targetPath,
+    buffer,
+    `Upload resume: ${company.name} — ${company.role}`
+  );
+
+  // GitHub returns { content: { html_url, ... } } for PUT /contents
+  const url = result?.content?.html_url;
+  if (!url) {
+    throw Object.assign(new Error('GitHub response missing html_url.'), { status: 502 });
+  }
+  return { url, path: targetPath };
 }

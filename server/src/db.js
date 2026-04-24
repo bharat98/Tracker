@@ -42,7 +42,7 @@ db.exec(`
     recruiter_name            TEXT NOT NULL DEFAULT '',
     recruiter_company         TEXT NOT NULL DEFAULT '',
     current_stage             TEXT NOT NULL DEFAULT 'sourced',
-    resume_version            TEXT NOT NULL DEFAULT ''
+    resume_link               TEXT NOT NULL DEFAULT ''
   );
   CREATE TABLE IF NOT EXISTS tweaks (
     key   TEXT PRIMARY KEY,
@@ -93,7 +93,13 @@ if (!has('hm_contacted_directly')) db.exec(`ALTER TABLE companies ADD COLUMN hm_
 if (!has('recruiter_name')) db.exec(`ALTER TABLE companies ADD COLUMN recruiter_name TEXT NOT NULL DEFAULT ''`);
 if (!has('recruiter_company')) db.exec(`ALTER TABLE companies ADD COLUMN recruiter_company TEXT NOT NULL DEFAULT ''`);
 if (!has('current_stage')) db.exec(`ALTER TABLE companies ADD COLUMN current_stage TEXT NOT NULL DEFAULT 'sourced'`);
-if (!has('resume_version')) db.exec(`ALTER TABLE companies ADD COLUMN resume_version TEXT NOT NULL DEFAULT ''`);
+// resume_link stores the GitHub URL of the uploaded resume. Previously a free-text
+// "resume version" field — renamed when we added PDF upload on Applied transition.
+if (has('resume_version') && !has('resume_link')) {
+  db.exec(`ALTER TABLE companies RENAME COLUMN resume_version TO resume_link`);
+} else if (!has('resume_link')) {
+  db.exec(`ALTER TABLE companies ADD COLUMN resume_link TEXT NOT NULL DEFAULT ''`);
+}
 
 // One-time migration: copy flat contact columns → contacts table
 const contactsMigrated = db.prepare("SELECT value FROM tweaks WHERE key = 'contacts_migrated_v1'").get();
@@ -201,7 +207,7 @@ const parseCompany = (row) => ({
   recruiterName: row.recruiter_name || '',
   recruiterCompany: row.recruiter_company || '',
   currentStage: row.current_stage || 'sourced',
-  resumeVersion: row.resume_version || '',
+  resumeLink: row.resume_link || '',
 });
 
 const parseEvent = (row) => ({
@@ -241,7 +247,7 @@ export function createCompany(input) {
        id, name, role, statuses, next_steps, blockers, notes, position,
        created_at, updated_at, source_url, pipeline, channel,
        referral_name, referral_relationship, hm_name, hm_contacted_directly,
-       recruiter_name, recruiter_company, current_stage, resume_version
+       recruiter_name, recruiter_company, current_stage, resume_link
      )
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
@@ -265,7 +271,7 @@ export function createCompany(input) {
     input.recruiterName || '',
     input.recruiterCompany || '',
     input.currentStage || 'sourced',
-    input.resumeVersion || ''
+    input.resumeLink || ''
   );
   return getCompany(id);
 }
@@ -288,7 +294,7 @@ const FIELD_MAP = {
   recruiterName: 'recruiter_name',
   recruiterCompany: 'recruiter_company',
   currentStage: 'current_stage',
-  resumeVersion: 'resume_version',
+  resumeLink: 'resume_link',
 };
 const JSON_FIELDS = new Set(['statuses', 'nextSteps']);
 const BOOL_FIELDS = new Set(['hmContactedDirectly']);
