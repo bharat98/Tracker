@@ -2,11 +2,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { C, DEFAULT_STATUS_LABELS, uid } from './theme.js';
 import * as api from './api.js';
 import CompanyRow from './components/CompanyRow.jsx';
-import CompanyModal from './components/CompanyModal.jsx';
+import CompanyDetail from './components/CompanyDetail.jsx';
 import TweaksPanel from './components/TweaksPanel.jsx';
 import ConflictDialog from './components/ConflictDialog.jsx';
 import Toast from './components/Toast.jsx';
 import Dashboard from './components/Dashboard.jsx';
+import Network from './components/Network.jsx';
 
 const makeBlankCompany = () => ({
   id: uid(),
@@ -46,7 +47,9 @@ export default function App() {
   const [extractionAvailable, setExtractionAvailable] = useState(false);
   const [githubSyncAvailable, setGithubSyncAvailable] = useState(false);
   const [companies, setCompanies] = useState([]);
-  const [modal, setModal] = useState(null); // {company, isNew}
+  // Detail view replaces the old modal — when set, the whole page switches
+  // from the list/dashboard to a full-screen CompanyDetail.
+  const [detail, setDetail] = useState(null); // {company, isNew} | null
   const [tweaksVisible, setTweaksVisible] = useState(false);
   const [tweaks, setTweaks] = useState({
     statusLabels: DEFAULT_STATUS_LABELS,
@@ -210,10 +213,10 @@ export default function App() {
     api.deleteCompany(id).catch(logError('deleteCompany'));
   }, []);
 
-  const openAdd = () => setModal({ company: makeBlankCompany(), isNew: true });
-  const openDetail = (c) => setModal({ company: c, isNew: false });
-  const saveModal = (updated, extras = {}) => {
-    if (modal.isNew) createCompany(updated, extras);
+  const openAdd = () => setDetail({ company: makeBlankCompany(), isNew: true });
+  const openDetail = (c) => setDetail({ company: c, isNew: false });
+  const saveDetail = (updated, extras = {}) => {
+    if (detail.isNew) createCompany(updated, extras);
     else replaceCompany(updated);
   };
 
@@ -312,28 +315,38 @@ export default function App() {
             Double-click a row for details · Drag to reorder
           </p>
         </div>
-        <button
-          onClick={openAdd}
-          style={{
-            padding: '8px 18px',
-            borderRadius: 8,
-            border: 'none',
-            background: C.accent,
-            color: '#0F0F0F',
-            cursor: 'pointer',
-            fontFamily: 'inherit',
-            fontSize: 13,
-            fontWeight: 700,
-            transition: 'all 0.15s',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = C.accentBright)}
-          onMouseLeave={(e) => (e.currentTarget.style.background = C.accent)}
-        >
-          + Add Company
-        </button>
+        {!detail && (
+          <button
+            onClick={openAdd}
+            style={{
+              padding: '8px 18px',
+              borderRadius: 8,
+              border: 'none',
+              background: C.accent,
+              color: '#0F0F0F',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              fontSize: 13,
+              fontWeight: 700,
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = C.accentBright)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = C.accent)}
+          >
+            + Add Company
+          </button>
+        )}
       </div>
 
-      {(() => {
+      {detail ? (
+        <CompanyDetail
+          company={detail.company}
+          isNew={detail.isNew}
+          extractionAvailable={extractionAvailable}
+          onBack={() => setDetail(null)}
+          onSave={saveDetail}
+        />
+      ) : (() => {
         const ongoingCount = companies.filter(
           (c) => (c.pipeline || 'ongoing') === 'ongoing'
         ).length;
@@ -349,6 +362,7 @@ export default function App() {
           { key: 'ongoing', label: 'Ongoing', count: ongoingCount },
           { key: 'rejected', label: 'Rejected', count: rejectedCount },
           { key: 'all', label: 'All', count: companies.length },
+          { key: 'network', label: 'Network', count: null },
         ];
 
         return (
@@ -409,7 +423,9 @@ export default function App() {
             >
               {activeTab === 'dashboard' && <Dashboard companies={companies} />}
 
-              {activeTab !== 'dashboard' && (
+              {activeTab === 'network' && <Network companies={companies} />}
+
+              {activeTab !== 'dashboard' && activeTab !== 'network' && (
                 <>
                   <div
                     style={{
@@ -485,16 +501,6 @@ export default function App() {
           </>
         );
       })()}
-
-      {modal && (
-        <CompanyModal
-          company={modal.company}
-          isNew={modal.isNew}
-          extractionAvailable={extractionAvailable}
-          onClose={() => setModal(null)}
-          onSave={saveModal}
-        />
-      )}
 
       <TweaksPanel visible={tweaksVisible} tweaks={tweaks} setTweaks={setTweaks} />
 

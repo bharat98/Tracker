@@ -4,9 +4,6 @@ import * as api from '../api.js';
 import NextStepsTree from './NextStepsTree.jsx';
 import EventLog from './EventLog.jsx';
 
-// Dropdown options for the structured metadata. Keep in sync with the
-// AI-facing MCP spec — these are the canonical values analytics will
-// group by.
 const CHANNEL_OPTIONS = [
   { value: '', label: '—' },
   { value: 'portal', label: 'Company portal' },
@@ -32,11 +29,11 @@ const STAGE_OPTIONS = [
   { value: 'ghosted', label: 'Ghosted' },
 ];
 
-export default function CompanyModal({
+export default function CompanyDetail({
   company,
   isNew,
   extractionAvailable = false,
-  onClose,
+  onBack,
   onSave,
 }) {
   const [name, setName] = useState(company.name);
@@ -49,7 +46,6 @@ export default function CompanyModal({
   const [editLabel, setEditLabel] = useState('');
   const labelRef = useRef(null);
 
-  // Structured metadata — the fields AI tools will use for analysis.
   const [channel, setChannel] = useState(company.channel || '');
   const [referralName, setReferralName] = useState(company.referralName || '');
   const [referralRelationship, setReferralRelationship] = useState(
@@ -64,12 +60,9 @@ export default function CompanyModal({
   const [currentStage, setCurrentStage] = useState(company.currentStage || 'sourced');
   const [resumeVersion, setResumeVersion] = useState(company.resumeVersion || '');
 
-  // URL extraction state (only used in new-company mode)
   const [jobUrl, setJobUrl] = useState('');
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState('');
-  // Full stripped JD text from the last successful extract — we DON'T
-  // persist this to the DB, but we hand it to GitHub sync after save.
   const [sourceText, setSourceText] = useState('');
   const [sourceUrl, setSourceUrl] = useState(company.sourceUrl || '');
 
@@ -97,14 +90,6 @@ export default function CompanyModal({
   useEffect(() => {
     if (editingIdx !== null && labelRef.current) labelRef.current.focus();
   }, [editingIdx]);
-
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const toggleStatus = (i) => {
     const n = [...statuses];
@@ -146,10 +131,8 @@ export default function CompanyModal({
       currentStage,
       resumeVersion: resumeVersion.trim(),
     };
-    // Second arg is "extras" — sourceText is sent to GitHub sync but NOT
-    // persisted in the DB. Lives only in this HTTP round-trip.
     onSave(persistedCompany, { sourceText });
-    onClose();
+    onBack();
   };
 
   const inputStyle = {
@@ -172,62 +155,105 @@ export default function CompanyModal({
     letterSpacing: 1,
   };
 
+  const title = isNew ? 'Add New Company' : `${company.name}${company.role ? ` — ${company.role}` : ''}`;
+
   return (
     <div
       style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.7)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        backdropFilter: 'blur(4px)',
+        border: `1px solid ${C.border}`,
+        borderRadius: 8,
+        background: C.surface,
+        padding: 0,
       }}
-      onClick={onClose}
     >
+      {/* Sticky header: back + title + actions */}
       <div
-        onClick={(e) => e.stopPropagation()}
         style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
           background: C.bg,
-          borderRadius: 14,
-          width: '92%',
-          maxWidth: 820,
-          maxHeight: '90vh',
-          overflow: 'auto',
-          padding: 32,
-          border: `1px solid ${C.border}`,
-          boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
+          borderBottom: `1px solid ${C.border}`,
+          borderRadius: '8px 8px 0 0',
+          padding: '16px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 16,
         }}
       >
-        <div
+        <button
+          onClick={onBack}
           style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 24,
+            background: 'none',
+            border: `1px solid ${C.border}`,
+            color: C.textDim,
+            borderRadius: 6,
+            padding: '6px 12px',
+            fontSize: 13,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = C.text;
+            e.currentTarget.style.borderColor = C.textDim;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = C.textDim;
+            e.currentTarget.style.borderColor = C.border;
           }}
         >
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: C.accent }}>
-            {isNew ? 'Add New Company' : `${company.name} — ${company.role}`}
-          </h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: 20,
-              cursor: 'pointer',
-              color: C.textDim,
-            }}
-          >
-            ✕
-          </button>
-        </div>
+          ← Back
+        </button>
+        <h2
+          style={{
+            flex: 1,
+            fontSize: 20,
+            fontWeight: 700,
+            color: C.accent,
+            margin: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {title}
+        </h2>
+        <button
+          onClick={onBack}
+          style={{
+            padding: '8px 18px',
+            borderRadius: 6,
+            border: `1px solid ${C.border}`,
+            background: C.surface,
+            color: C.text,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 13,
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={doSave}
+          style={{
+            padding: '8px 22px',
+            borderRadius: 6,
+            border: 'none',
+            background: C.accent,
+            color: '#0F0F0F',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          {isNew ? 'Add Company' : 'Save'}
+        </button>
+      </div>
 
+      <div style={{ padding: 24 }}>
         {isNew && (
           <>
-            {/* Paste-URL shortcut: pre-fills name and role via backend LLM call */}
             <div style={{ marginBottom: 16 }}>
               <div style={sectionTitle}>
                 Paste Job URL
@@ -253,10 +279,7 @@ export default function CompanyModal({
                   onKeyDown={(e) => e.key === 'Enter' && handleFetch()}
                   placeholder="https://www.linkedin.com/jobs/view/..."
                   disabled={!extractionAvailable || fetching}
-                  style={{
-                    ...inputStyle,
-                    opacity: extractionAvailable ? 1 : 0.5,
-                  }}
+                  style={{ ...inputStyle, opacity: extractionAvailable ? 1 : 0.5 }}
                 />
                 <button
                   type="button"
@@ -269,7 +292,9 @@ export default function CompanyModal({
                     background: C.accent,
                     color: '#0F0F0F',
                     cursor:
-                      !extractionAvailable || fetching || !jobUrl.trim() ? 'not-allowed' : 'pointer',
+                      !extractionAvailable || fetching || !jobUrl.trim()
+                        ? 'not-allowed'
+                        : 'pointer',
                     fontFamily: 'inherit',
                     fontSize: 13,
                     fontWeight: 700,
@@ -425,7 +450,6 @@ export default function CompanyModal({
           />
         </div>
 
-        {/* ── Structured metadata ── */}
         <div
           style={{
             marginBottom: 24,
@@ -557,7 +581,6 @@ export default function CompanyModal({
           </div>
         </div>
 
-        {/* ── Event log (existing companies only — needs a company_id) ── */}
         {!isNew && (
           <div style={{ marginBottom: 24 }}>
             <EventLog companyId={company.id} />
@@ -576,7 +599,7 @@ export default function CompanyModal({
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button
-            onClick={onClose}
+            onClick={onBack}
             style={{
               padding: '8px 20px',
               borderRadius: 6,

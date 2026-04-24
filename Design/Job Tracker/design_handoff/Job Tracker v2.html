@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{height:100%}
+body{font-family:'DM Sans',sans-serif;background:#0F0F0F;color:#E8E0D8}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:#1A1A1A}
+::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+::selection{background:rgba(194,150,100,0.3)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+/* ─── CONFIG ─── */
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "statusLabels": "LinkedIn Reachout,Someone at Company Connected,Hiring Manager Tracked,Resume Created,Hiring Manager Contacted,Applied,Interview 1,Interview 2",
+  "rowDensity": "comfortable"
+}/*EDITMODE-END*/;
+
+const C = {
+  bg: '#0F0F0F',
+  surface: '#1A1A1A',
+  surfaceHover: '#222222',
+  card: '#161616',
+  accent: '#C2966A',
+  accentDim: 'rgba(194,150,106,0.15)',
+  accentBright: '#D4A87A',
+  border: '#2A2A2A',
+  borderLight: '#333',
+  text: '#E8E0D8',
+  textDim: '#8A7E72',
+  textMuted: '#5A5048',
+  green: '#7AA870',
+  greenDim: 'rgba(122,168,112,0.15)',
+  red: '#C07060',
+  redDim: 'rgba(192,112,96,0.12)',
+};
+
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ─── DATA ─── */
+const STORAGE_KEY = 'job_tracker_v2';
+const load = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch { return null; } };
+const save = (d) => localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const defStatuses = () => TWEAK_DEFAULTS.statusLabels.split(',').map(s=>({label:s.trim(),checked:false}));
+
+const makeCompany = (name='', role='', ov={}) => ({
+  id: uid(), name, role, pipeline: 'ongoing', statuses: defStatuses(), nextSteps: [], blockers: '', notes: '', ...ov
+});
+
+const SAMPLE = () => [
+  makeCompany('Google','TAM',{
+    statuses: TWEAK_DEFAULTS.statusLabels.split(',').map((s,i)=>({label:s.trim(),checked:i<3})),
+    nextSteps: [
+      {id:'a1',text:'Create resume',children:[{id:'a1a',text:'Tailor for TAM role',children:[]},{id:'a1b',text:'Send to recruiter',children:[]}]},
+      {id:'a2',text:'Find other TAMs',children:[{id:'a2a',text:'Learn about role',children:[]}]},
+    ],
+    blockers:'Need referral contact',
+  }),
+  makeCompany('Meta','Solutions Engineer'),
+  makeCompany('Amazon','Account Manager'),
+  makeCompany('Microsoft','CSM'),
+  makeCompany('Salesforce','AE'),
+];
+
+/* ─── STEP NODE (tree) ─── */
+function StepNode({node, depth=0, onUpdate, onDelete, onAddChild}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(node.text);
+  const ref = useRef(null);
+  useEffect(()=>{ if(editing && ref.current) ref.current.focus(); },[editing]);
+  const commit = () => { setEditing(false); text.trim() ? onUpdate(node.id,text.trim()) : onDelete(node.id); };
+
+  return (
+    <div style={{marginLeft: depth>0?18:0}}>
+      <div style={{display:'flex',alignItems:'center',gap:5,padding:'3px 0'}}>
+        {depth>0 && <svg width="14" height="14" viewBox="0 0 14 14" style={{flexShrink:0,opacity:0.5}}>
+          <path d="M2 0 L2 7 L12 7" stroke={C.accent} strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+          <polygon points="10,5 14,7 10,9" fill={C.accent}/>
+        </svg>}
+        {editing
+          ? <input ref={ref} value={text} onChange={e=>setText(e.target.value)}
+              onBlur={commit} onKeyDown={e=>e.key==='Enter'&&commit()}
+              style={{flex:1,padding:'2px 6px',border:`1px solid ${C.accent}`,borderRadius:3,
+                fontFamily:'inherit',fontSize:12,outline:'none',background:C.accentDim,color:C.text}}/>
+          : <span style={{fontSize:12,cursor:'pointer',flex:1,color:C.text}} onClick={()=>setEditing(true)}>{node.text}</span>
+        }
+        <button onClick={()=>onAddChild(node.id)} style={{background:'none',border:'none',cursor:'pointer',color:C.textMuted,fontSize:13,padding:'0 1px'}}>+</button>
+        <button onClick={()=>onDelete(node.id)} style={{background:'none',border:'none',cursor:'pointer',color:C.textMuted,fontSize:11,padding:'0 1px'}}>✕</button>
+      </div>
+      {node.children?.map(ch=><StepNode key={ch.id} node={ch} depth={depth+1} onUpdate={onUpdate} onDelete={onDelete} onAddChild={onAddChild}/>)}
+    </div>
+  );
+}
+
+function NextStepsTree({steps, onChange}) {
+  const updateText = (nodes,id,text) => nodes.map(n=> n.id===id ? {...n,text} : {...n,children:updateText(n.children||[],id,text)});
+  const del = (nodes,id) => nodes.filter(n=>n.id!==id).map(n=>({...n,children:del(n.children||[],id)}));
+  const addChild = (nodes,pid) => nodes.map(n=> n.id===pid ? {...n,children:[...(n.children||[]),{id:uid(),text:'New step',children:[]}]} : {...n,children:addChild(n.children||[],pid)});
+
+  return (
+    <div>
+      {steps.map(n=><StepNode key={n.id} node={n}
+        onUpdate={(id,t)=>onChange(updateText(steps,id,t))}
+        onDelete={(id)=>onChange(del(steps,id))}
+        onAddChild={(id)=>onChange(addChild(steps,id))}/>)}
+      <button onClick={()=>onChange([...steps,{id:uid(),text:'New step',children:[]}])}
+        style={{marginTop:4,background:'none',border:`1px dashed ${C.border}`,borderRadius:4,
+          padding:'3px 8px',fontSize:11,cursor:'pointer',color:C.textDim,fontFamily:'inherit'}}>+ Add step</button>
+    </div>
+  );
+}
+
+/* ─── MODAL (detail + add new) ─── */
+function CompanyModal({company, onClose, onSave, isNew}) {
+  const [name, setName] = useState(company.name);
+  const [role, setRole] = useState(company.role);
+  const [notes, setNotes] = useState(company.notes||'');
+  const [statuses, setStatuses] = useState(company.statuses);
+  const [nextSteps, setNextSteps] = useState(company.nextSteps);
+  const [blockers, setBlockers] = useState(company.blockers);
+  const [editingIdx, setEditingIdx] = useState(null);
+  const [editLabel, setEditLabel] = useState('');
+  const labelRef = useRef(null);
+
+  useEffect(()=>{ if(editingIdx!==null && labelRef.current) labelRef.current.focus(); },[editingIdx]);
+
+  const toggleStatus = i => { const n=[...statuses]; n[i]={...n[i],checked:!n[i].checked}; setStatuses(n); };
+  const startEditLabel = (i) => { setEditingIdx(i); setEditLabel(statuses[i].label); };
+  const commitLabel = () => {
+    if(editingIdx===null) return;
+    const n=[...statuses]; n[editingIdx]={...n[editingIdx],label:editLabel.trim()||n[editingIdx].label}; setStatuses(n); setEditingIdx(null);
+  };
+  const removeStatus = i => setStatuses(statuses.filter((_,idx)=>idx!==i));
+  const addStatus = () => setStatuses([...statuses,{label:'New Status',checked:false}]);
+
+  const doSave = () => {
+    if(isNew && !name.trim()) return;
+    onSave({...company, name:name.trim()||company.name, role:role.trim(), notes, statuses, nextSteps, blockers});
+    onClose();
+  };
+
+  const inputStyle = {
+    width:'100%',padding:'8px 10px',border:`1px solid ${C.border}`,borderRadius:6,
+    fontFamily:'inherit',fontSize:14,outline:'none',background:C.surface,color:C.text,
+  };
+  const sectionTitle = {fontSize:11,fontWeight:600,marginBottom:8,color:C.textDim,textTransform:'uppercase',letterSpacing:1};
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,backdropFilter:'blur(4px)'}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.bg,borderRadius:14,width:'92%',maxWidth:820,maxHeight:'90vh',overflow:'auto',padding:32,border:`1px solid ${C.border}`,boxShadow:'0 24px 80px rgba(0,0,0,0.6)'}}>
+        {/* Header */}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+          <h2 style={{fontSize:20,fontWeight:700,color:C.accent}}>{isNew ? 'Add New Company' : `${company.name} — ${company.role}`}</h2>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:20,cursor:'pointer',color:C.textDim}}>✕</button>
+        </div>
+
+        {/* Name + Role (always editable in modal) */}
+        {isNew && <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+          <div>
+            <div style={sectionTitle}>Company Name</div>
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Google" style={inputStyle} autoFocus/>
+          </div>
+          <div>
+            <div style={sectionTitle}>Role</div>
+            <input value={role} onChange={e=>setRole(e.target.value)} placeholder="e.g. TAM" style={inputStyle}/>
+          </div>
+        </div>}
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24,marginBottom:24}}>
+          {/* Status */}
+          <div>
+            <div style={sectionTitle}>Status Checklist</div>
+            <div style={{display:'flex',flexDirection:'column',gap:5}}>
+              {statuses.map((s,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:7,fontSize:13}}>
+                  <input type="checkbox" checked={s.checked} onChange={()=>toggleStatus(i)}
+                    style={{accentColor:C.green,width:15,height:15,cursor:'pointer'}}/>
+                  {editingIdx===i
+                    ? <input ref={labelRef} value={editLabel} onChange={e=>setEditLabel(e.target.value)}
+                        onBlur={commitLabel} onKeyDown={e=>e.key==='Enter'&&commitLabel()}
+                        style={{flex:1,padding:'1px 4px',border:`1px solid ${C.accent}`,borderRadius:3,background:C.accentDim,color:C.text,fontFamily:'inherit',fontSize:13,outline:'none'}}/>
+                    : <span onClick={()=>startEditLabel(i)} style={{cursor:'pointer',flex:1,color:s.checked?C.green:C.text,textDecoration:s.checked?'line-through':'none',opacity:s.checked?0.6:1}}>{s.label}</span>
+                  }
+                  <button onClick={()=>removeStatus(i)} style={{background:'none',border:'none',cursor:'pointer',color:C.textMuted,fontSize:11}}>✕</button>
+                </div>
+              ))}
+              <button onClick={addStatus} style={{background:'none',border:`1px dashed ${C.border}`,borderRadius:4,padding:'4px 8px',fontSize:11,cursor:'pointer',color:C.textDim,fontFamily:'inherit',marginTop:2}}>+ Add status</button>
+            </div>
+          </div>
+          {/* Next Steps */}
+          <div>
+            <div style={sectionTitle}>Next Steps</div>
+            <NextStepsTree steps={nextSteps} onChange={setNextSteps}/>
+          </div>
+        </div>
+
+        {/* Blockers */}
+        <div style={{marginBottom:20}}>
+          <div style={sectionTitle}>Blockers</div>
+          <textarea value={blockers} onChange={e=>setBlockers(e.target.value)} placeholder="Any blockers..."
+            style={{...inputStyle,minHeight:56,resize:'vertical',background:C.redDim,border:`1px solid ${C.border}`}}/>
+        </div>
+
+        {/* Notes */}
+        <div style={{marginBottom:24}}>
+          <div style={sectionTitle}>Notes / Gameplay</div>
+          <textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Paste detailed notes here…"
+            style={{...inputStyle,minHeight:100,resize:'vertical'}}/>
+        </div>
+
+        {/* Actions */}
+        <div style={{display:'flex',justifyContent:'flex-end',gap:10}}>
+          <button onClick={onClose} style={{padding:'8px 20px',borderRadius:6,border:`1px solid ${C.border}`,background:C.surface,color:C.text,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>Cancel</button>
+          <button onClick={doSave} style={{padding:'8px 24px',borderRadius:6,border:'none',background:C.accent,color:'#0F0F0F',cursor:'pointer',fontFamily:'inherit',fontSize:14,fontWeight:700}}>
+            {isNew ? 'Add Company' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── COMPANY ROW ─── */
+function CompanyRow({company, onUpdate, onOpenDetail, onDragStart, onDragOver, onDrop, isDragOver}) {
+  const density = TWEAK_DEFAULTS.rowDensity;
+  const py = density==='compact'?10:16;
+
+  const toggleStatus = idx => {
+    const next={...company, statuses:company.statuses.map((s,i)=>i===idx?{...s,checked:!s.checked}:s)};
+    onUpdate(next);
+  };
+
+  const checked = company.statuses.filter(s=>s.checked).length;
+  const pct = company.statuses.length ? checked/company.statuses.length : 0;
+  const isRejected = company.pipeline === 'rejected';
+
+  return (
+    <div draggable onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop}
+      onDoubleClick={()=>onOpenDetail(company)}
+      style={{
+        background:C.card, borderRadius:10,
+        border:`1px solid ${isDragOver?C.accent:isRejected?'rgba(192,112,96,0.3)':C.border}`,
+        display:'grid', gridTemplateColumns:'190px 1fr 1fr 170px',
+        cursor:'grab', transition:'all 0.15s',
+        opacity: isRejected ? 0.75 : 1,
+        boxShadow: isDragOver ? `0 0 0 1px ${C.accent}` : '0 1px 4px rgba(0,0,0,0.2)',
+      }}
+      onMouseEnter={e=>{if(!isDragOver) e.currentTarget.style.borderColor=C.borderLight; e.currentTarget.style.background=C.surfaceHover;}}
+      onMouseLeave={e=>{e.currentTarget.style.borderColor=isDragOver?C.accent:isRejected?'rgba(192,112,96,0.3)':C.border; e.currentTarget.style.background=C.card;}}
+    >
+      {/* Name */}
+      <div style={{padding:`${py}px 14px`,borderRight:`1px solid ${C.border}`,display:'flex',flexDirection:'column',justifyContent:'center'}}>
+        <div style={{fontWeight:600,fontSize:14,color:isRejected?C.textDim:C.text,textDecoration:isRejected?'line-through':'none'}}>{company.name}</div>
+        <div style={{fontSize:12,color:C.textDim,marginTop:1}}>{company.role}</div>
+        <div style={{marginTop:6,height:3,background:C.border,borderRadius:2,overflow:'hidden'}}>
+          <div style={{width:`${pct*100}%`,height:'100%',background:isRejected?C.red:C.green,borderRadius:2,transition:'width 0.3s'}}/>
+        </div>
+        <div style={{fontSize:10,color:C.textMuted,marginTop:3}}>{checked}/{company.statuses.length} complete</div>
+        {/* Pipeline dropdown */}
+        <select value={company.pipeline||'ongoing'}
+          onChange={e=>{e.stopPropagation(); onUpdate({...company,pipeline:e.target.value});}}
+          onClick={e=>e.stopPropagation()}
+          style={{marginTop:7,padding:'2px 5px',borderRadius:4,border:`1px solid ${C.border}`,
+            background:isRejected?'rgba(192,112,96,0.15)':C.accentDim,
+            color:isRejected?C.red:C.accent,fontFamily:'inherit',fontSize:11,cursor:'pointer',outline:'none',
+            fontWeight:600,width:'100%'}}>
+          <option value="ongoing">● Ongoing</option>
+          <option value="rejected">✕ Rejected</option>
+        </select>
+      </div>
+
+      {/* Status */}
+      <div style={{padding:`${py}px 12px`,borderRight:`1px solid ${C.border}`,display:'flex',flexDirection:'column',gap:density==='compact'?1:3}} onClick={e=>e.stopPropagation()}>
+        {company.statuses.map((s,i)=>(
+          <label key={i} style={{display:'flex',alignItems:'center',gap:6,fontSize:12,cursor:'pointer',
+            color:s.checked?C.green:C.text,textDecoration:s.checked?'line-through':'none',opacity:s.checked?0.55:1}}>
+            <input type="checkbox" checked={s.checked} onChange={()=>toggleStatus(i)}
+              style={{accentColor:C.green,width:13,height:13,cursor:'pointer'}}/>
+            {s.label}
+          </label>
+        ))}
+      </div>
+
+      {/* Next Steps */}
+      <div style={{padding:`${py}px 12px`,borderRight:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}>
+        <NextStepsTree steps={company.nextSteps} onChange={steps=>onUpdate({...company,nextSteps:steps})}/>
+      </div>
+
+      {/* Blockers */}
+      <div style={{padding:`${py}px 12px`}} onClick={e=>e.stopPropagation()}>
+        <textarea value={company.blockers} onChange={e=>onUpdate({...company,blockers:e.target.value})} placeholder="—"
+          style={{width:'100%',height:'100%',minHeight:40,border:'none',resize:'none',fontFamily:'inherit',
+            fontSize:12,outline:'none',background:'transparent',color:company.blockers?C.red:C.textMuted}}/>
+      </div>
+    </div>
+  );
+}
+
+/* ─── DASHBOARD ─── */
+function Dashboard({companies}) {
+  // ── Heatmap data: last 24 weeks of fake activity seeded from companies ──
+  const today = new Date();
+  const heatmapWeeks = 24;
+  const totalDays = heatmapWeeks * 7;
+  // Build day cells
+  const days = [];
+  for(let i = totalDays - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    // Seed activity from company count + some randomness for demo
+    const base = companies.length;
+    const noise = Math.sin(i * 0.3 + base) * 0.5 + 0.5;
+    const prob = base > 0 ? 0.18 + noise * 0.25 : 0.08 + noise * 0.12;
+    const activity = Math.random() < prob ? Math.floor(Math.random() * 4) + 1 : 0;
+    days.push({ date: d, activity });
+  }
+  // Pad so first col starts on Sunday
+  const firstDow = days[0].date.getDay();
+  const padded = [...Array(firstDow).fill(null), ...days];
+  const weeks = [];
+  for(let i = 0; i < padded.length; i += 7) weeks.push(padded.slice(i, i+7));
+
+  const heatColor = (n) => {
+    if(!n) return C.border;
+    if(n === 1) return 'rgba(194,150,106,0.3)';
+    if(n === 2) return 'rgba(194,150,106,0.55)';
+    if(n === 3) return 'rgba(194,150,106,0.8)';
+    return C.accent;
+  };
+
+  const months = [];
+  let lastMonth = -1;
+  weeks.forEach((wk, wi) => {
+    const d = wk.find(d=>d);
+    if(d && d.date.getMonth() !== lastMonth) {
+      months.push({ wi, label: d.date.toLocaleString('default',{month:'short'}) });
+      lastMonth = d.date.getMonth();
+    }
+  });
+
+  // ── Funnel / tree data derived from companies ──
+  const total = companies.length;
+  const statLabels = ['LinkedIn Reachout','Applied','Interview 1','Interview 2'];
+  const funnelData = statLabels.map(label => ({
+    label,
+    count: companies.filter(c => c.statuses?.some(s => s.label === label && s.checked)).length,
+  }));
+  // Add rejected + offer nodes
+  const rejected = companies.filter(c=>c.pipeline==='rejected').length;
+  const ongoing = companies.filter(c=>(c.pipeline||'ongoing')==='ongoing').length;
+
+  // Colors
+  const nodeColor = '#C2966A';
+  const rejColor = '#C07060';
+  const ongoingColor = '#7AA870';
+
+  // Simple SVG funnel tree
+  const svgW = 600, svgH = 320;
+  const stages = [
+    { label: 'Total', count: total, x: 60, y: 40, color: C.textDim },
+    { label: 'Reachout', count: funnelData[0].count, x: 60, y: 100, color: nodeColor },
+    { label: 'Applied', count: funnelData[1].count, x: 60, y: 160, color: nodeColor },
+    { label: 'Interview 1', count: funnelData[2].count, x: 60, y: 220, color: nodeColor },
+    { label: 'Interview 2', count: funnelData[3].count, x: 60, y: 280, color: nodeColor },
+  ];
+  // Branch off nodes (rejected at each stage, ongoing at bottom)
+  const branches = [
+    { from: 2, label: 'No Response', count: Math.max(0,funnelData[0].count - funnelData[1].count), x: 260, y: 100, color: rejColor },
+    { from: 3, label: 'Rejected', count: Math.max(0,funnelData[1].count - funnelData[2].count), x: 260, y: 160, color: rejColor },
+    { from: 4, label: 'Ghosted', count: Math.max(0,funnelData[2].count - funnelData[3].count), x: 260, y: 220, color: rejColor },
+    { from: 4, label: 'Ongoing', count: ongoing, x: 260, y: 280, color: ongoingColor },
+  ];
+
+  const NodeCircle = ({x,y,count,label,color}) => (
+    <g>
+      <circle cx={x} cy={y} r={18} fill={`${color}22`} stroke={color} strokeWidth={1.5}/>
+      <text x={x} y={y+1} textAnchor="middle" dominantBaseline="middle" fill={color} fontSize={13} fontWeight={700}>{count}</text>
+      <text x={x+26} y={y+1} dominantBaseline="middle" fill={C.textDim} fontSize={11}>{label}</text>
+    </g>
+  );
+
+  return (
+    <div style={{padding:'8px 0'}}>
+      {/* Stats row */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:28}}>
+        {[
+          {label:'Total Tracked', value:total, color:C.accent},
+          {label:'Ongoing', value:ongoing, color:C.green},
+          {label:'Rejected', value:rejected, color:C.red},
+          {label:'Interviews', value:funnelData[2].count, color:'#8A9EC2'},
+        ].map(({label,value,color})=>(
+          <div key={label} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:'14px 16px'}}>
+            <div style={{fontSize:22,fontWeight:700,color,letterSpacing:'-0.03em'}}>{value}</div>
+            <div style={{fontSize:11,color:C.textMuted,marginTop:3,textTransform:'uppercase',letterSpacing:0.8}}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+        {/* Heatmap */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'16px 18px'}}>
+          <div style={{fontSize:12,fontWeight:600,color:C.textDim,textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>Activity</div>
+          {/* Month labels */}
+          <div style={{display:'flex',gap:3,marginBottom:3,paddingLeft:22}}>
+            {weeks.map((wk,wi)=>{
+              const m = months.find(m=>m.wi===wi);
+              return <div key={wi} style={{width:10,fontSize:9,color:C.textMuted,flexShrink:0}}>{m?m.label:''}</div>;
+            })}
+          </div>
+          <div style={{display:'flex',gap:3}}>
+            {/* Day labels */}
+            <div style={{display:'flex',flexDirection:'column',gap:3,marginRight:2}}>
+              {['S','M','T','W','T','F','S'].map((d,i)=>(
+                <div key={i} style={{height:10,fontSize:8,color:C.textMuted,lineHeight:'10px'}}>{i%2===1?d:''}</div>
+              ))}
+            </div>
+            {weeks.map((wk,wi)=>(
+              <div key={wi} style={{display:'flex',flexDirection:'column',gap:3}}>
+                {wk.map((day,di)=>(
+                  <div key={di} style={{width:10,height:10,borderRadius:2,
+                    background:day?heatColor(day.activity):C.bg,
+                    opacity:day?1:0}}
+                    title={day?`${day.date.toDateString()}: ${day.activity} action${day.activity!==1?'s':''}`:''} />
+                ))}
+              </div>
+            ))}
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:6,marginTop:10}}>
+            <span style={{fontSize:10,color:C.textMuted}}>Less</span>
+            {[0,1,2,3,4].map(n=>(
+              <div key={n} style={{width:10,height:10,borderRadius:2,background:heatColor(n)}}/>
+            ))}
+            <span style={{fontSize:10,color:C.textMuted}}>More</span>
+          </div>
+        </div>
+
+        {/* Pipeline funnel tree */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'16px 18px'}}>
+          <div style={{fontSize:12,fontWeight:600,color:C.textDim,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>Pipeline</div>
+          <svg width="100%" viewBox={`0 0 ${svgW} ${svgH}`} style={{overflow:'visible'}}>
+            {/* Vertical spine */}
+            <line x1={60} y1={58} x2={60} y2={280} stroke={C.border} strokeWidth={1.5} strokeDasharray="3,3"/>
+            {/* Branch lines */}
+            {branches.map((b,i)=>{
+              const from = stages[b.from-1];
+              return <path key={i} d={`M ${from.x+18} ${from.y} C ${(from.x+b.x)/2} ${from.y}, ${(from.x+b.x)/2} ${b.y}, ${b.x-18} ${b.y}`}
+                stroke={b.color} strokeWidth={1.2} fill="none" strokeDasharray="4,3" opacity={0.7}/>;
+            })}
+            {/* Stage nodes */}
+            {stages.map((s,i)=><NodeCircle key={i} {...s}/>)}
+            {/* Branch nodes */}
+            {branches.map((b,i)=><NodeCircle key={i} x={b.x} y={b.y} count={b.count} label={b.label} color={b.color}/>)}
+          </svg>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── TWEAKS ─── */
+function TweaksPanel({visible, tweaks, setTweaks}) {
+  if(!visible) return null;
+  const [labels, setLabels] = useState(tweaks.statusLabels);
+  return (
+    <div style={{position:'fixed',bottom:16,right:16,width:280,background:C.surface,borderRadius:10,
+      boxShadow:'0 8px 30px rgba(0,0,0,0.4)',border:`1px solid ${C.border}`,padding:14,zIndex:999}}>
+      <h3 style={{fontSize:13,fontWeight:700,marginBottom:10,color:C.accent}}>Tweaks</h3>
+      <div style={{marginBottom:10}}>
+        <label style={{fontSize:11,fontWeight:600,color:C.textDim,display:'block',marginBottom:3}}>Row Density</label>
+        <select value={tweaks.rowDensity} onChange={e=>setTweaks({...tweaks,rowDensity:e.target.value})}
+          style={{width:'100%',padding:'5px 7px',borderRadius:4,border:`1px solid ${C.border}`,fontFamily:'inherit',fontSize:12,background:C.card,color:C.text}}>
+          <option value="compact">Compact</option>
+          <option value="comfortable">Comfortable</option>
+        </select>
+      </div>
+      <div>
+        <label style={{fontSize:11,fontWeight:600,color:C.textDim,display:'block',marginBottom:3}}>Default Status Labels</label>
+        <textarea value={labels} onChange={e=>setLabels(e.target.value)} onBlur={()=>setTweaks({...tweaks,statusLabels:labels})}
+          style={{width:'100%',minHeight:70,padding:7,borderRadius:4,border:`1px solid ${C.border}`,fontFamily:'inherit',fontSize:11,resize:'vertical',background:C.card,color:C.text}}/>
+      </div>
+    </div>
+  );
+}
+
+/* ─── APP ─── */
+function App() {
+  const [companies, setCompanies] = useState(()=>load()||SAMPLE());
+  const [modal, setModal] = useState(null);
+  const [tweaksVisible, setTweaksVisible] = useState(false);
+  const [tweaks, setTweaks] = useState({...TWEAK_DEFAULTS});
+  const [activeTab, setActiveTab] = useState('ongoing'); // 'ongoing' | 'rejected' | 'all'
+  const dragItem = useRef(null);
+  const [dragOverId, setDragOverId] = useState(null);
+
+  useEffect(()=>{ save(companies); },[companies]);
+
+  // Tweaks edit mode
+  useEffect(()=>{
+    const h = e => {
+      if(e.data?.type==='__activate_edit_mode') setTweaksVisible(true);
+      if(e.data?.type==='__deactivate_edit_mode') setTweaksVisible(false);
+    };
+    window.addEventListener('message',h);
+    window.parent.postMessage({type:'__edit_mode_available'},'*');
+    return ()=>window.removeEventListener('message',h);
+  },[]);
+  useEffect(()=>{ window.parent.postMessage({type:'__edit_mode_set_keys',edits:tweaks},'*'); },[tweaks]);
+
+  const updateCompany = u => setCompanies(p=>p.map(c=>c.id===u.id?u:c));
+  const deleteCompany = id => setCompanies(p=>p.filter(c=>c.id!==id));
+
+  const openAdd = () => setModal({company:makeCompany(), isNew:true});
+  const openDetail = c => setModal({company:c, isNew:false});
+  const saveModal = updated => {
+    if(modal.isNew) setCompanies(p=>[...p,updated]);
+    else updateCompany(updated);
+  };
+
+  // Drag reorder
+  const handleDragStart = (e, id) => { dragItem.current=id; e.dataTransfer.effectAllowed='move'; };
+  const handleDragOver = (e, id) => { e.preventDefault(); setDragOverId(id); };
+  const handleDrop = (e, targetId) => {
+    e.preventDefault(); setDragOverId(null);
+    const srcId = dragItem.current; if(!srcId||srcId===targetId) return;
+    setCompanies(prev=>{
+      const list=[...prev]; const si=list.findIndex(c=>c.id===srcId); const ti=list.findIndex(c=>c.id===targetId);
+      const [item]=list.splice(si,1); list.splice(ti,0,item); return list;
+    });
+  };
+
+  const ongoingCount = companies.filter(c=>(c.pipeline||'ongoing')==='ongoing').length;
+  const rejectedCount = companies.filter(c=>c.pipeline==='rejected').length;
+
+  const visibleCompanies = companies.filter(c => {
+    const p = c.pipeline || 'ongoing';
+    if(activeTab==='ongoing') return p==='ongoing';
+    if(activeTab==='rejected') return p==='rejected';
+    return true;
+  });
+
+return (
+    <div style={{maxWidth:1200,margin:'0 auto',padding:'28px 24px'}}>
+      {/* Header */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <div>
+          <h1 style={{fontSize:24,fontWeight:700,color:C.accent,letterSpacing:'-0.02em'}}>Job Tracker</h1>
+          <p style={{fontSize:12,color:C.textMuted,marginTop:3}}>Double-click a row for details · Drag to reorder</p>
+        </div>
+        <button onClick={openAdd} style={{padding:'8px 18px',borderRadius:8,border:'none',background:C.accent,color:'#0F0F0F',cursor:'pointer',fontFamily:'inherit',fontSize:13,fontWeight:700,transition:'all 0.15s'}}
+          onMouseEnter={e=>e.currentTarget.style.background=C.accentBright}
+          onMouseLeave={e=>e.currentTarget.style.background=C.accent}>+ Add Company</button>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex',gap:0,marginBottom:0,alignItems:'flex-end'}}>
+        {[
+          {key:'dashboard', label:'Dashboard', count:null},
+          {key:'ongoing', label:'Ongoing', count:ongoingCount},
+          {key:'rejected', label:'Rejected', count:rejectedCount},
+          {key:'all', label:'All', count:companies.length},
+        ].map(({key,label,count})=>{
+          const active = activeTab===key;
+          return (
+            <button key={key} onClick={()=>setActiveTab(key)} style={{
+              padding:'9px 22px 10px', border:`1px solid ${active?C.border:'transparent'}`,
+              borderBottom: active ? `1px solid ${C.surface}` : '1px solid transparent',
+              borderRadius:'8px 8px 0 0',
+              background: active ? C.surface : 'transparent',
+              color: active ? C.text : C.textDim,
+              cursor:'pointer', fontFamily:'inherit', fontSize:13, fontWeight: active?600:400,
+              transition:'all 0.15s', position:'relative', zIndex: active?2:1,
+              marginBottom: active ? '-1px' : 0,
+            }}>
+              {label}
+              {count > 0 && <span style={{marginLeft:5,fontSize:11,opacity:0.55,fontWeight:400}}>({count})</span>}
+            </button>
+          );
+        })}
+        <div style={{flex:1,borderBottom:`1px solid ${C.border}`}}/>
+      </div>
+
+      {/* Content area */}
+      <div style={{border:`1px solid ${C.border}`,borderTop:'none',borderRadius:'0 8px 8px 8px',padding:'16px 14px 16px',background:C.surface}}>
+
+      {/* Dashboard view */}
+      {activeTab==='dashboard' && <Dashboard companies={companies}/>}
+
+      {/* Column headers — only shown on list tabs */}
+      {activeTab!=='dashboard' && <div style={{display:'grid',gridTemplateColumns:'190px 1fr 1fr 170px',padding:'0 0 8px 0',fontSize:10,fontWeight:600,color:C.textMuted,textTransform:'uppercase',letterSpacing:1}}>
+        <span>Company</span><span>Status</span><span>Next Steps</span><span>Blockers</span>
+      </div>}
+
+      {/* Rows */}
+      {activeTab!=='dashboard' && <div style={{display:'flex',flexDirection:'column',gap:6}}>
+        {visibleCompanies.length===0 && (
+          <div style={{textAlign:'center',padding:'48px 0',color:C.textMuted,fontSize:14}}>
+            {activeTab==='rejected' ? 'No rejected companies yet.' : 'No companies here.'}
+          </div>
+        )}
+        {visibleCompanies.map(c=>(
+          <div key={c.id} style={{position:'relative'}}>
+            <CompanyRow company={c} onUpdate={updateCompany} onOpenDetail={openDetail}
+              onDragStart={e=>handleDragStart(e,c.id)}
+              onDragOver={e=>handleDragOver(e,c.id)}
+              onDrop={e=>handleDrop(e,c.id)}
+              isDragOver={dragOverId===c.id}/>
+            <button onClick={()=>deleteCompany(c.id)} title="Delete"
+              style={{position:'absolute',top:6,right:6,background:'none',border:'none',cursor:'pointer',color:C.textMuted,fontSize:12,opacity:0.3,transition:'opacity 0.15s'}}
+              onMouseEnter={e=>e.currentTarget.style.opacity=1}
+              onMouseLeave={e=>e.currentTarget.style.opacity=0.3}>✕</button>
+          </div>
+        ))}
+      </div>}
+
+      </div>
+
+      {/* Modal */}
+      {modal && <CompanyModal company={modal.company} isNew={modal.isNew}
+        onClose={()=>setModal(null)} onSave={saveModal}/>}
+
+      <TweaksPanel visible={tweaksVisible} tweaks={tweaks} setTweaks={setTweaks}/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
