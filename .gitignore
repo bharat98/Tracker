@@ -19,3 +19,6 @@ data/
 
 # local project memory — never commit to GitHub
 memory.md
+
+# playwright test artifacts
+.playwright-mcp/
