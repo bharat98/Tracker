@@ -18,6 +18,7 @@ import * as api from '../api.js';
 
 const STAGE_COLUMNS = [
   { key: 'sourced',      label: 'Sourced' },
+  { key: 'networked',    label: 'Networked' },
   { key: 'applied',      label: 'Applied' },
   { key: 'screening',    label: 'Screen' },
   { key: 'interviewing', label: 'Interview' },
