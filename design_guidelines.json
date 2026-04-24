@@ -1,0 +1,120 @@
+{
+  "project_name": "Job-Search CRM (Editorial Outbound)",
+  "theme": "light",
+  "archetype": "Archetype 1 (Organic & Earthy) mixed with Editorial Typography",
+  "vibe": "Editorial, Warm, Human, Sharp. Avoids 'AI-slop', dark-dense UI, and generic rounded tech aesthetics.",
+  "global_rules": [
+    "No Inter, Roboto, or standard tech fonts for headings.",
+    "No purple-blue gradients or generic Vercel-style card grids.",
+    "No massive drop shadows. Use 1px sharp borders and flat solid backgrounds.",
+    "Every interactive or informational element MUST have a `data-testid` attribute (e.g., `data-testid=\"kanban-column-ongoing\"`).",
+    "Generous padding (`p-6`, `p-8`) inside bounded containers.",
+    "Bento grid for dashboard with asymmetric spacing and strict alignment."
+  ],
+  "typography": {
+    "fonts": {
+      "heading": "Cormorant Garamond, serif",
+      "body": "Work Sans, sans-serif",
+      "mono": "IBM Plex Mono, monospace"
+    },
+    "rules": {
+      "h1": "text-4xl sm:text-5xl font-light tracking-tight text-stone-900",
+      "h2": "text-2xl sm:text-3xl font-normal tracking-tight text-stone-900",
+      "h3": "text-xl sm:text-2xl font-normal text-stone-800",
+      "body": "text-base leading-relaxed text-stone-700",
+      "small_labels": "text-xs font-mono uppercase tracking-[0.1em] text-stone-500",
+      "numbers": "font-mono font-medium tracking-tight text-stone-900"
+    }
+  },
+  "colors": {
+    "background": {
+      "base": "#FDFBF7",
+      "surface": "#FFFFFF",
+      "surface_hover": "#F5F3EF",
+      "surface_muted": "#F0EEEA"
+    },
+    "border": {
+      "default": "#E5E2DC",
+      "active": "#1C1917",
+      "divider": "#EFECE7"
+    },
+    "text": {
+      "primary": "#1C1917",
+      "secondary": "#78716C",
+      "muted": "#A8A29E"
+    },
+    "accent": {
+      "primary": "#D95A40",
+      "primary_hover": "#C24930",
+      "primary_text": "#FFFFFF",
+      "secondary": "#2D4A22",
+      "secondary_hover": "#22381A"
+    },
+    "kanban_pills": {
+      "hm": {"bg": "#FCEAEA", "text": "#7F1D1D"},
+      "recruiter": {"bg": "#FEF3C7", "text": "#92400E"},
+      "referral": {"bg": "#E0F2FE", "text": "#075985"},
+      "cold_reach": {"bg": "#F3E8FF", "text": "#6B21A8"},
+      "employee": {"bg": "#DCFCE7", "text": "#166534"}
+    }
+  },
+  "layout_spacing": {
+    "container": "max-w-7xl mx-auto px-6 lg:px-12",
+    "section_gap": "gap-12 md:gap-24",
+    "card_padding": "p-6 md:p-8",
+    "radius": {
+      "base": "rounded-sm",
+      "button": "rounded-none",
+      "avatar": "rounded-sm"
+    },
+    "grid_strategy": {
+      "dashboard": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6. Use col-span-2 or col-span-3 for main charts to break symmetry."
+    }
+  },
+  "surfaces_and_components": {
+    "cards": "bg-white border border-[#E5E2DC] shadow-none rounded-sm. No hover lift, just border color change to #1C1917 on interactive cards.",
+    "buttons": {
+      "primary": "bg-[#D95A40] text-white hover:bg-[#C24930] rounded-none px-6 py-2.5 font-medium transition-colors",
+      "secondary": "bg-transparent text-stone-900 border border-stone-900 hover:bg-stone-100 rounded-none px-6 py-2.5 transition-colors",
+      "ghost": "bg-transparent text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-none transition-colors"
+    },
+    "tabs": "Border-bottom style only. Active tab has border-b-2 border-stone-900 text-stone-900. Inactive tabs are border-b-2 border-transparent text-stone-500. Avoid generic gray pill backgrounds.",
+    "inputs": "bg-white border-b border-stone-300 rounded-none px-0 py-2 focus:ring-0 focus:border-stone-900 transition-colors. (Minimalist line style preferred over full boxes if applicable, else sharp rectangular boxes).",
+    "kanban_columns": "border-r border-[#E5E2DC] last:border-r-0 px-4 min-h-[70vh] bg-[#FDFBF7]"
+  },
+  "interactions": {
+    "hover": "Backgrounds shift to surface_hover (#F5F3EF), borders darken. Avoid over-animated transforms.",
+    "focus": "focus:outline-none focus:ring-2 focus:ring-[#D95A40]/20 focus:border-[#D95A40]",
+    "animations": "Subtle opacity fades on state change (150ms ease-in-out). No bouncy spring animations."
+  },
+  "media": {
+    "avatar_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1762522926157-bcc04bf0b10a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3NjkzNjE5M3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Male avatar, white shirt"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1769636929388-99eff95d3bf1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3NjkzNjE5M3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Female avatar, short hair"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1655249493799-9cee4fe983bb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3NjkzNjE5M3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Person in grey sweater"
+      },
+      {
+        "url": "https://images.pexels.com/photos/14589344/pexels-photo-14589344.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Male portrait in suit"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Install Google Fonts 'Cormorant Garamond', 'Work Sans', and 'IBM Plex Mono' in index.css.",
+    "The UI should feel like a high-end print magazine applied to a CRM. Use generous whitespace.",
+    "Do not use generic Shadcn soft cards. If using Shadcn components, override borders to 1px sharp `#E5E2DC`, shadows to none, and radius to `sm` or `none`.",
+    "For the Heatmap, use varying opacities of the accent color (#D95A40).",
+    "For the AI '+ Log' extraction text area, use an editorial mono-spaced block that feels raw and immediate.",
+    "Ensure the dashboard uses standard Recharts but customize strokes and fills to match the terracotta and olive palette.",
+    "Kanban board should not look like Jira. It should look like an elegant list of running conversations. Use the media avatars for contacts.",
+    "ALL interactive elements (tabs, log buttons, pipeline columns, specific table rows) MUST include `data-testid` attributes."
+  ]
+}
