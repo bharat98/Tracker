@@ -1,20 +1,24 @@
+// Editorial palette (warm off-white, terracotta accent, olive secondary).
+// Keeps the same key names the rest of the app already imports; new
+// surfaces should prefer CSS variables from styles.css.
 export const C = {
-  bg: '#0F0F0F',
-  surface: '#1A1A1A',
-  surfaceHover: '#222222',
-  card: '#161616',
-  accent: '#C2966A',
-  accentDim: 'rgba(194,150,106,0.15)',
-  accentBright: '#D4A87A',
-  border: '#2A2A2A',
-  borderLight: '#333',
-  text: '#E8E0D8',
-  textDim: '#8A7E72',
-  textMuted: '#5A5048',
-  green: '#7AA870',
-  greenDim: 'rgba(122,168,112,0.15)',
-  red: '#C07060',
-  redDim: 'rgba(192,112,96,0.12)',
+  bg: '#FDFBF7',
+  surface: '#FFFFFF',
+  surfaceHover: '#F5F3EF',
+  card: '#FFFFFF',
+  accent: '#D95A40',
+  accentDim: 'rgba(217,90,64,0.12)',
+  accentBright: '#C24930',
+  accent2: '#2D4A22',
+  border: '#E5E2DC',
+  borderLight: '#EFECE7',
+  text: '#1C1917',
+  textDim: '#78716C',
+  textMuted: '#A8A29E',
+  green: '#166534',
+  greenDim: 'rgba(22,101,52,0.10)',
+  red: '#B91C1C',
+  redDim: '#FDEDED',
 };
 
 export const DEFAULT_STATUS_LABELS =

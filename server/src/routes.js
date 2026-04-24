@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import * as db from './db.js';
 import { extractJob } from './extract.js';
+import { parseNlLog, commitNlLog } from './nllog.js';
 import { syncCompany, isConfigured as githubConfigured } from './github.js';
 
 export const routes = Router();
@@ -159,5 +160,36 @@ routes.post('/github/sync', syncLimiter, async (req, res) => {
   } catch (err) {
     const status = err.status || 500;
     res.status(status).json({ error: err.message || 'GitHub sync failed.' });
+  }
+});
+
+// ── NL Quick Log ──────────────────────────────────────────────────────────────
+const nllogLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many NL log requests. Try again in a minute.' },
+});
+
+routes.post('/ai/nl-log', nllogLimiter, async (req, res) => {
+  const { text } = req.body || {};
+  if (!text?.trim()) return res.status(400).json({ error: 'text is required' });
+  try {
+    const parsed = await parseNlLog(text);
+    res.json({ parsed });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Parse failed.' });
+  }
+});
+
+routes.post('/ai/nl-log/commit', async (req, res) => {
+  const { parsed } = req.body || {};
+  if (!parsed) return res.status(400).json({ error: 'parsed is required' });
+  try {
+    const result = commitNlLog(parsed, db);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Commit failed.' });
   }
 });

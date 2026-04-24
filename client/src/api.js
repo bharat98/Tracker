@@ -69,3 +69,6 @@ export const deleteEvent = (id) => request('DELETE', `/events/${id}`);
 
 export const getTweaks = () => request('GET', '/tweaks');
 export const setTweaks = (patch) => request('PUT', '/tweaks', patch);
+
+export const nlLog = (text) => request('POST', '/ai/nl-log', { text });
+export const nlLogCommit = (parsed) => request('POST', '/ai/nl-log/commit', { parsed });
