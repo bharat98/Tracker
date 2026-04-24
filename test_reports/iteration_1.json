@@ -1,0 +1,47 @@
+{
+  "summary": "Backend 16/19 passing; 3 AI endpoint failures all due to EMERGENT_LLM_KEY budget exceeded ('Max budget: 0.001'). All CRUD (Companies/Contacts/Messages/Templates/Events), cascading deletes, primary-uniqueness, inbound->flip outbound replied, template use_count/reply_count side-effects, snooze, followups enrichment, dashboard shape, and CSV zip export are green. Frontend loads cleanly; Dashboard/Companies/Templates/Follow-ups pages render, manual Add Company creates card in 'sourced' kanban column, Company Drawer shows details/tabs/pipeline+stage/delete, Add Contact creates contact with role_type pill + connection + primary star + Log button, Templates CRUD works (row renders with placeholder pills), QuickLog modal opens with all testids, Export ZIP link href correctly points to /api/export/zip.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/api/ai/extract-url, /api/ai/nl-log, /api/ai/nl-log/commit", "issue": "All AI endpoints return 502 'Budget has been exceeded! Current cost: 0.062664, Max budget: 0.001'. EMERGENT_LLM_KEY budget is exhausted/misconfigured. Code handles LLM errors correctly (502 with detail) but feature is unusable end-to-end. This blocks: AI URL extraction on Add Company URL tab, AI Quick Log parse+commit flow.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Quick Log AI parse", "issue": "Clicking 'Parse with AI' will 502 until EMERGENT_LLM_KEY budget is fixed", "affected_selectors": ["[data-testid='quick-log-parse']"]},
+      {"flow": "Add Company > URL tab > Extract", "issue": "Extract with AI will 502 until LLM budget is fixed", "affected_selectors": ["[data-testid='extract-url-btn']"]}
+    ],
+    "design_issues": [
+      {"screen": "Company Drawer", "issues": ["Top label shows 'REMOTE' which is the 'source' field; when user enters location in the Location field but leaves Source empty, the top eyebrow label appears blank or picks up the wrong text. Worth confirming the eyebrow maps to 'source' and not 'location'."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Resolve EMERGENT_LLM_KEY budget issue \u2014 current key has Max budget 0.001 causing every LLM call to fail. All three AI endpoints are unusable until this is fixed. Please request a higher-budget Emergent LLM key.",
+    "Minor testability: Add data-testid to the empty-state 'New template' button in Templates.jsx (line ~57) and to the Manual Add Company form inputs (company/role/location/source/job_url/resume_version) \u2014 only the wrapping modal has testids.",
+    "Minor testability: the Log Message Modal panel does not have dedicated data-testids on body_summary textarea (discovered 'log-message-save' exists but body field is generic textarea inside log-message-modal-panel)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1109 lines \u2014 single file is above the 700-line guideline; splitting into routers/ai.py, routers/companies.py etc. would improve maintainability.",
+    "Placeholder regex is for {{name}} style (correct \u2014 matches frontend). The problem statement's mention of '{x}' pattern was inaccurate; actual impl uses {{x}} which is consistent across backend + frontend.",
+    "Dashboard funnel maps 'offer_received' events to key 'offer' but pipeline updates also emit 'offer_received' \u2014 there is no 'offer_accepted' funnel bucket despite it being a valid EventKind. Minor.",
+    "extract-url timeout is 8s \u2014 slow pages/CDNs may fail fetch; LLM still called with just URL, OK fallback.",
+    "In list_companies, last_activity_at compares ISO strings lexicographically which works only because timezones are uniform; consider parsing to datetime for correctness.",
+    "AI endpoints raise HTTPException(502) with raw exception string in detail \u2014 may leak internal details; consider generic error + server-side logging (logging is done)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/__init__.py",
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "84% (16/19; the 3 failures are all AI endpoints blocked by LLM budget issue, not code bugs)", "frontend": "~95% (all non-AI flows verified; AI flows blocked by backend)"},
+  "test_credentials": "None required (no auth).",
+  "seed_data_creation": "Created TEST_PWCo company and TEST_Jane contact and TEST_PW_Tmpl template via UI during testing. pytest fixtures also create TEST_* prefixed data and clean up via cascade delete.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite is at /app/backend/tests/backend_test.py covering 19 tests. Rerun after main agent swaps LLM key: `python -m pytest /app/backend/tests/backend_test.py -v`. The 3 AI tests (TestAI.test_extract_url_simple, test_extract_url_unreachable, test_nl_log_and_commit) should pass once LLM budget is healthy. Frontend testids are well-placed on nav, modals, drawer, cards, contacts, templates, quick-log, export-zip-btn \u2014 use them for future Playwright tests. Manual Add Company input fields lack testids; use nth-input-of selector within [data-testid='add-company-modal-panel'].",
+  "rca of the issue": "Root cause of 3 AI test failures: litellm returns 'Budget has been exceeded! Current cost: 0.062664, Max budget: 0.001' on every LLM request via emergentintegrations. The provided EMERGENT_LLM_KEY has an extremely low max budget (0.001) already consumed. Reproduction: `curl -X POST $BACKEND/api/ai/extract-url -d '{\"url\":\"https://example.com\"}' -H 'Content-Type: application/json'` -> 502 with budget error. Mitigation: main agent should request/rotate to a higher-budget Emergent LLM key."
+}
