@@ -5,6 +5,7 @@ import * as db from './db.js';
 import { extractJob } from './extract.js';
 import { parseNlLog, commitNlLog } from './nllog.js';
 import { syncCompany, uploadResumeFile, isConfigured as githubConfigured } from './github.js';
+import { fetchLinkedInProfile } from './linkedin.js';
 
 // Resume upload: PDF / DOC / DOCX only, 10 MB cap, kept in memory so we can
 // stream the buffer straight to GitHub without touching disk.
@@ -213,6 +214,28 @@ routes.post('/github/sync', syncLimiter, async (req, res) => {
   } catch (err) {
     const status = err.status || 500;
     res.status(status).json({ error: err.message || 'GitHub sync failed.' });
+  }
+});
+
+// ── LinkedIn lookup ───────────────────────────────────────────────────────────
+// Tight rate limit — each request is an outbound hit to linkedin.com from
+// our IP. Sustained traffic gets us rate-limited or blocked by LinkedIn.
+const linkedInLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many LinkedIn lookups. Try again in a minute.' },
+});
+
+routes.post('/linkedin-lookup', linkedInLimiter, async (req, res) => {
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  try {
+    const data = await fetchLinkedInProfile(url);
+    res.json(data);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Lookup failed.' });
   }
 });
 

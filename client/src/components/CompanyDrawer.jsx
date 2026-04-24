@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X, Trash2 } from 'lucide-react';
+import { X, Trash2, Download, Loader } from 'lucide-react';
 import EventLog from './EventLog.jsx';
 import NextStepsTree from './NextStepsTree.jsx';
 import * as api from '../api.js';
+
+const LINKEDIN_RE = /^https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#]+/i;
 
 const STAGE_OPTIONS = [
   { value: 'sourced',       label: 'Sourced' },
@@ -285,9 +287,11 @@ function OverviewTab({ statuses, nextSteps, blockers, onToggleStatus, onNextStep
 
 // ── Contacts tab — reads/writes the contacts table via API ────────────────────
 
+// showTitle = render a "Title / designation" input in the add form and show
+// the title above the name in the listed row. LinkedIn headlines land here.
 const SECTION_CONFIG = [
-  { role: 'hiring_manager', title: 'Hiring Manager', pill: 'HM',  pillClass: 'pill-hm' },
-  { role: 'recruiter',      title: 'Recruiter',      pill: 'REC', pillClass: 'pill-recruiter', notesLabel: 'Firm / agency' },
+  { role: 'hiring_manager', title: 'Hiring Manager', pill: 'HM',  pillClass: 'pill-hm',        showTitle: true },
+  { role: 'recruiter',      title: 'Recruiter',      pill: 'REC', pillClass: 'pill-recruiter', showTitle: true, notesLabel: 'Firm / agency' },
   { role: 'referral',       title: 'Referral',       pill: 'REF', pillClass: 'pill-referral',  notesLabel: 'Relationship' },
   { role: 'other',          title: 'Other',          showTitle: true },
 ];
@@ -390,31 +394,85 @@ function ContactSection({ sec, contacts, isAdding, draft, onStartAdd, onDraftCha
       {contacts.map((c) => <ContactRow key={c.id} contact={c} sec={sec} onDelete={onDelete} />)}
 
       {isAdding && (
-        <div style={{ paddingTop: contacts.length ? '0.75rem' : 0, borderTop: contacts.length ? '1px solid var(--divider)' : 'none' }}>
-          {sec.showTitle && (
-            <input
-              className="input"
-              placeholder="Title / role (e.g. Engineering Manager)"
-              value={draft.title || ''}
-              onChange={(e) => onDraftChange({ title: e.target.value })}
-              style={{ marginBottom: '0.5rem' }}
-            />
-          )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <input className="input" placeholder="First name" value={draft.firstName || ''} onChange={(e) => onDraftChange({ firstName: e.target.value })} />
-            <input className="input" placeholder="Last name"  value={draft.lastName  || ''} onChange={(e) => onDraftChange({ lastName:  e.target.value })} />
-          </div>
-          <input className="input" placeholder="LinkedIn URL"     value={draft.linkedinUrl || ''} onChange={(e) => onDraftChange({ linkedinUrl: e.target.value })} style={{ marginBottom: '0.5rem' }} />
-          <input className="input" placeholder="Email (optional)" value={draft.email       || ''} onChange={(e) => onDraftChange({ email:       e.target.value })} style={{ marginBottom: sec.notesLabel ? '0.5rem' : '0.25rem' }} />
-          {sec.notesLabel && (
-            <input className="input" placeholder={sec.notesLabel} value={draft.notes || ''} onChange={(e) => onDraftChange({ notes: e.target.value })} style={{ marginBottom: '0.25rem' }} />
-          )}
-          <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
-            <button className="btn btn-ghost"    onClick={onCancel} style={{ fontSize: '0.82rem' }}>Cancel</button>
-            <button className="btn btn-primary"  onClick={onSave}   style={{ fontSize: '0.82rem' }}>Save</button>
-          </div>
+        <ContactAddForm sec={sec} draft={draft} onDraftChange={onDraftChange} onCancel={onCancel} onSave={onSave} hasExisting={contacts.length > 0} />
+      )}
+    </div>
+  );
+}
+
+function ContactAddForm({ sec, draft, onDraftChange, onCancel, onSave, hasExisting }) {
+  const [fetching, setFetching] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState('');
+  const canFetch = LINKEDIN_RE.test((draft.linkedinUrl || '').trim()) && !fetching;
+
+  const handleFetch = async () => {
+    setFetching(true);
+    setFetchMsg('');
+    try {
+      const r = await api.fetchLinkedIn(draft.linkedinUrl.trim());
+      const patch = {};
+      if (r.firstName) patch.firstName = r.firstName;
+      if (r.lastName)  patch.lastName  = r.lastName;
+      if (r.headline)  patch.title     = r.headline;
+      onDraftChange(patch);
+      if (!r.firstName && !r.lastName && !r.headline) {
+        setFetchMsg('Nothing returned — profile may be private.');
+      }
+    } catch (e) {
+      setFetchMsg(e.message || 'Lookup failed.');
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  return (
+    <div style={{ paddingTop: hasExisting ? '0.75rem' : 0, borderTop: hasExisting ? '1px solid var(--divider)' : 'none' }}>
+      {sec.showTitle && (
+        <input
+          className="input"
+          placeholder={sec.role === 'other' ? 'Title / role (e.g. Engineering Manager)' : 'Title / designation'}
+          value={draft.title || ''}
+          onChange={(e) => onDraftChange({ title: e.target.value })}
+          style={{ marginBottom: '0.5rem' }}
+        />
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <input className="input" placeholder="First name" value={draft.firstName || ''} onChange={(e) => onDraftChange({ firstName: e.target.value })} />
+        <input className="input" placeholder="Last name"  value={draft.lastName  || ''} onChange={(e) => onDraftChange({ lastName:  e.target.value })} />
+      </div>
+      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
+        <input
+          className="input"
+          placeholder="LinkedIn URL"
+          value={draft.linkedinUrl || ''}
+          onChange={(e) => onDraftChange({ linkedinUrl: e.target.value })}
+          style={{ flex: 1 }}
+        />
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={handleFetch}
+          disabled={!canFetch}
+          title={canFetch ? 'Fetch name & headline from LinkedIn' : 'Paste a linkedin.com/in/… URL'}
+          style={{ padding: '0.3rem 0.6rem', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.3rem', whiteSpace: 'nowrap' }}
+        >
+          {fetching ? <Loader size={12} className="spin" /> : <Download size={12} />}
+          Fetch
+        </button>
+      </div>
+      <input className="input" placeholder="Email (optional)" value={draft.email || ''} onChange={(e) => onDraftChange({ email: e.target.value })} style={{ marginBottom: sec.notesLabel ? '0.5rem' : '0.25rem' }} />
+      {sec.notesLabel && (
+        <input className="input" placeholder={sec.notesLabel} value={draft.notes || ''} onChange={(e) => onDraftChange({ notes: e.target.value })} style={{ marginBottom: '0.25rem' }} />
+      )}
+      {fetchMsg && (
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+          {fetchMsg}
         </div>
       )}
+      <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+        <button className="btn btn-ghost"    onClick={onCancel} style={{ fontSize: '0.82rem' }}>Cancel</button>
+        <button className="btn btn-primary"  onClick={onSave}   style={{ fontSize: '0.82rem' }}>Save</button>
+      </div>
     </div>
   );
 }

@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import { X, UserPlus, Loader } from 'lucide-react';
+import { X, UserPlus, Loader, Download } from 'lucide-react';
 import * as api from '../api.js';
 
-const EMPTY_HM    = { firstName: '', lastName: '', linkedinUrl: '', email: '' };
-const EMPTY_REC   = { firstName: '', lastName: '', linkedinUrl: '', email: '', notes: '' };
+const EMPTY_HM    = { firstName: '', lastName: '', linkedinUrl: '', email: '', title: '' };
+const EMPTY_REC   = { firstName: '', lastName: '', linkedinUrl: '', email: '', notes: '', title: '' };
 const emptyOther  = () => ({ title: '', firstName: '', lastName: '', linkedinUrl: '', email: '' });
 
-const hasData = (c) => c.firstName || c.lastName || c.linkedinUrl || c.email;
+const hasData = (c) => c.firstName || c.lastName || c.linkedinUrl || c.email || c.title;
+
+const LINKEDIN_RE = /^https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#]+/i;
 
 export default function NetworkingModal({ open, company, onClose, onSkip, onMove }) {
   const [hm,     setHm]     = useState(EMPTY_HM);
@@ -88,7 +90,7 @@ export default function NetworkingModal({ open, company, onClose, onSkip, onMove
         <div style={{ overflowY: 'auto', flex: 1, padding: '1.25rem 1.5rem' }}>
           {/* Hiring Manager */}
           <ModalSectionHeader title="Hiring Manager" pill="HM" pillClass="pill-hm" />
-          <ContactFields data={hm} onChange={(p) => setHm((prev) => ({ ...prev, ...p }))} />
+          <ContactFields data={hm} onChange={(p) => setHm((prev) => ({ ...prev, ...p }))} showTitle />
 
           <div style={{ borderTop: '1px solid var(--divider)', margin: '1.25rem 0' }} />
 
@@ -97,6 +99,7 @@ export default function NetworkingModal({ open, company, onClose, onSkip, onMove
           <ContactFields
             data={rec}
             onChange={(p) => setRec((prev) => ({ ...prev, ...p }))}
+            showTitle
             extra={
               <input
                 className="input"
@@ -176,16 +179,73 @@ function ModalSectionHeader({ title, pill, pillClass }) {
   );
 }
 
-function ContactFields({ data, onChange, extra }) {
+function ContactFields({ data, onChange, extra, showTitle = false }) {
+  const [fetching, setFetching] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState('');
+  const canFetch = LINKEDIN_RE.test((data.linkedinUrl || '').trim()) && !fetching;
+
+  const handleFetch = async () => {
+    setFetching(true);
+    setFetchMsg('');
+    try {
+      const r = await api.fetchLinkedIn(data.linkedinUrl.trim());
+      const patch = {};
+      if (r.firstName) patch.firstName = r.firstName;
+      if (r.lastName)  patch.lastName  = r.lastName;
+      if (r.headline)  patch.title     = r.headline;
+      onChange(patch);
+      if (!r.firstName && !r.lastName && !r.headline) {
+        setFetchMsg('Nothing returned — profile may be private.');
+      }
+    } catch (e) {
+      setFetchMsg(e.message || 'Lookup failed.');
+    } finally {
+      setFetching(false);
+    }
+  };
+
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <input className="input" placeholder="First name" value={data.firstName} onChange={(e) => onChange({ firstName: e.target.value })} />
-        <input className="input" placeholder="Last name"  value={data.lastName}  onChange={(e) => onChange({ lastName:  e.target.value })} />
+        <input className="input" placeholder="First name" value={data.firstName || ''} onChange={(e) => onChange({ firstName: e.target.value })} />
+        <input className="input" placeholder="Last name"  value={data.lastName  || ''} onChange={(e) => onChange({ lastName:  e.target.value })} />
       </div>
-      <input className="input" placeholder="LinkedIn URL"      value={data.linkedinUrl} onChange={(e) => onChange({ linkedinUrl: e.target.value })} style={{ marginBottom: '0.5rem' }} />
-      <input className="input" placeholder="Email (optional)"  value={data.email}       onChange={(e) => onChange({ email:       e.target.value })} style={{ marginBottom: extra ? '0.5rem' : 0 }} />
+      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
+        <input
+          className="input"
+          placeholder="LinkedIn URL"
+          value={data.linkedinUrl || ''}
+          onChange={(e) => onChange({ linkedinUrl: e.target.value })}
+          style={{ flex: 1 }}
+        />
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={handleFetch}
+          disabled={!canFetch}
+          title={canFetch ? 'Fetch name & headline from LinkedIn' : 'Paste a linkedin.com/in/… URL'}
+          style={{ padding: '0.4rem 0.7rem', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
+        >
+          {fetching ? <Loader size={13} className="spin" /> : <Download size={13} />}
+          Fetch
+        </button>
+      </div>
+      {showTitle && (
+        <input
+          className="input"
+          placeholder="Title / designation"
+          value={data.title || ''}
+          onChange={(e) => onChange({ title: e.target.value })}
+          style={{ marginBottom: '0.5rem' }}
+        />
+      )}
+      <input className="input" placeholder="Email (optional)"  value={data.email || ''}       onChange={(e) => onChange({ email:       e.target.value })} style={{ marginBottom: extra ? '0.5rem' : 0 }} />
       {extra}
+      {fetchMsg && (
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+          {fetchMsg}
+        </div>
+      )}
     </div>
   );
 }
