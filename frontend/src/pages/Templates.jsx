@@ -54,7 +54,7 @@ export default function Templates({ refreshToken }) {
             </div>
 
             {rows.length === 0 ? (
-                <EmptyState title="No templates yet" hint="Create reusable outreach templates. Use {{name}}, {{company}}, {{role}} as placeholders." action={<button className="btn btn-primary" onClick={startNew}><Plus size={14} /> New template</button>} />
+                <EmptyState title="No templates yet" hint="Create reusable outreach templates. Use {{name}}, {{company}}, {{role}} as placeholders." action={<button className="btn btn-primary" onClick={startNew} data-testid="empty-new-template-btn"><Plus size={14} /> New template</button>} />
             ) : (
                 <div className="card" data-testid="templates-list">
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
