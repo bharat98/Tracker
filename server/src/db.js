@@ -77,7 +77,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
   CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
   CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company_id);
+  CREATE TABLE IF NOT EXISTS fitness_logs (
+    id         TEXT PRIMARY KEY,
+    date       TEXT NOT NULL UNIQUE,
+    muscle_kg  REAL NOT NULL DEFAULT 0,
+    fat_kg     REAL NOT NULL DEFAULT 0,
+    water_kg   REAL NOT NULL DEFAULT 0,
+    notes      TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS attachments (
+    id          TEXT PRIMARY KEY,
+    event_id    TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'image',
+    filename    TEXT NOT NULL,
+    mimetype    TEXT NOT NULL,
+    size_bytes  INTEGER NOT NULL,
+    path        TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_attachments_event ON attachments(event_id);
 `);
+
+// Filesystem location for uploaded attachments.
+export const UPLOADS_DIR = path.resolve(path.dirname(DB_PATH), 'uploads');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 // Migrations for columns added after initial schema. Each block is
 // idempotent — skips if the column already exists.
@@ -99,6 +124,13 @@ if (has('resume_version') && !has('resume_link')) {
   db.exec(`ALTER TABLE companies RENAME COLUMN resume_version TO resume_link`);
 } else if (!has('resume_link')) {
   db.exec(`ALTER TABLE companies ADD COLUMN resume_link TEXT NOT NULL DEFAULT ''`);
+}
+
+// source_url on contacts: where the user found this person (a LinkedIn post URL,
+// a tweet, an article — the evidence behind "this person is the recruiter").
+const contactCols = db.prepare('PRAGMA table_info(contacts)').all();
+if (!contactCols.some((c) => c.name === 'source_url')) {
+  db.exec(`ALTER TABLE contacts ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`);
 }
 
 // One-time migration: copy flat contact columns → contacts table
@@ -336,6 +368,29 @@ export function reorderCompanies(orderedIds) {
 // creating events for everything semantically meaningful — checkbox
 // ticks, status changes, messages sent — so downstream analysis has
 // the raw material to correlate tactics with outcomes.
+// Same as listEvents but also bundles each event's attachments inline.
+// One DB pass per company-scoped call — fine for a single-user app.
+export function listEventsWithAttachments(companyId) {
+  const events = listEvents({ companyId });
+  if (!events.length) return events;
+  const eventIds = events.map(e => e.id);
+  const placeholders = eventIds.map(() => '?').join(',');
+  const rows = db
+    .prepare(`SELECT * FROM attachments WHERE event_id IN (${placeholders}) ORDER BY created_at ASC`)
+    .all(...eventIds);
+  const byEvent = new Map();
+  for (const r of rows) {
+    const att = {
+      id: r.id, eventId: r.event_id, kind: r.kind,
+      filename: r.filename, mimetype: r.mimetype, sizeBytes: r.size_bytes,
+      url: `/uploads/${r.path}`, path: r.path, createdAt: r.created_at,
+    };
+    if (!byEvent.has(r.event_id)) byEvent.set(r.event_id, []);
+    byEvent.get(r.event_id).push(att);
+  }
+  return events.map(e => ({ ...e, attachments: byEvent.get(e.id) || [] }));
+}
+
 export function listEvents({ companyId, kind, channel, actor, after, before } = {}) {
   const where = [];
   const params = [];
@@ -435,6 +490,7 @@ const parseContact = (row) => ({
   linkedinUrl: row.linkedin_url || '',
   email:       row.email       || '',
   notes:       row.notes       || '',
+  sourceUrl:   row.source_url  || '',
   createdAt:   row.created_at,
 });
 
@@ -449,8 +505,8 @@ export function createContact(input) {
   const now = Date.now();
   const id  = input.id || uid();
   db.prepare(
-    `INSERT INTO contacts (id, company_id, role, title, first_name, last_name, linkedin_url, email, notes, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO contacts (id, company_id, role, title, first_name, last_name, linkedin_url, email, notes, source_url, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.companyId,
@@ -461,11 +517,113 @@ export function createContact(input) {
     input.linkedinUrl || '',
     input.email       || '',
     input.notes       || '',
+    input.sourceUrl   || '',
     now
   );
   return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
 }
 
+// Upsert by (company_id + first/last name OR linkedin_url OR email).
+// Returns { contact, created: boolean }.
+export function upsertContact(input) {
+  const all = db.prepare('SELECT * FROM contacts WHERE company_id = ?').all(input.companyId).map(parseContact);
+  const norm = (s) => (s || '').trim().toLowerCase();
+
+  const match = all.find((c) => {
+    if (input.linkedinUrl && norm(c.linkedinUrl) === norm(input.linkedinUrl)) return true;
+    if (input.email && norm(c.email) === norm(input.email)) return true;
+    if (input.firstName && input.lastName &&
+        norm(c.firstName) === norm(input.firstName) &&
+        norm(c.lastName)  === norm(input.lastName)) return true;
+    return false;
+  });
+
+  if (match) {
+    // Patch only fields that arrive non-empty so we don't clobber existing data.
+    const patch = {};
+    const keep = (k, v) => { if (v && !match[k]) patch[k] = v; };
+    keep('title',       input.title);
+    keep('linkedinUrl', input.linkedinUrl);
+    keep('email',       input.email);
+    keep('sourceUrl',   input.sourceUrl);
+    keep('role',        input.role !== 'other' ? input.role : '');
+    if (Object.keys(patch).length) {
+      const cols = [];
+      const vals = [];
+      const colMap = { title: 'title', linkedinUrl: 'linkedin_url', email: 'email', sourceUrl: 'source_url', role: 'role' };
+      for (const k of Object.keys(patch)) {
+        cols.push(`${colMap[k]} = ?`);
+        vals.push(patch[k]);
+      }
+      vals.push(match.id);
+      db.prepare(`UPDATE contacts SET ${cols.join(', ')} WHERE id = ?`).run(...vals);
+    }
+    return { contact: parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(match.id)), created: false };
+  }
+  return { contact: createContact(input), created: true };
+}
+
 export function deleteContact(id) {
   db.prepare('DELETE FROM contacts WHERE id = ?').run(id);
+}
+
+// ── Fitness logs ───────────────────────────────────────────────────────────────
+export function listFitnessLogs() {
+  return db.prepare('SELECT * FROM fitness_logs ORDER BY date ASC').all();
+}
+
+export function createFitnessLog({ id, date, muscle_kg, fat_kg, water_kg, notes }) {
+  db.prepare(
+    `INSERT INTO fitness_logs (id, date, muscle_kg, fat_kg, water_kg, notes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(date) DO UPDATE SET muscle_kg=excluded.muscle_kg, fat_kg=excluded.fat_kg,
+       water_kg=excluded.water_kg, notes=excluded.notes`
+  ).run(id, date, muscle_kg, fat_kg, water_kg, notes || '', Date.now());
+  return db.prepare('SELECT * FROM fitness_logs WHERE date = ?').get(date);
+}
+
+export function deleteFitnessLog(id) {
+  db.prepare('DELETE FROM fitness_logs WHERE id = ?').run(id);
+}
+
+// ── Attachments ────────────────────────────────────────────────────────────────
+const parseAttachment = (row) => row ? ({
+  id:         row.id,
+  eventId:    row.event_id,
+  kind:       row.kind,
+  filename:   row.filename,
+  mimetype:   row.mimetype,
+  sizeBytes:  row.size_bytes,
+  // url is what the frontend uses; path is the on-disk location relative to UPLOADS_DIR.
+  url:        `/uploads/${row.path}`,
+  path:       row.path,
+  createdAt:  row.created_at,
+}) : null;
+
+export function listAttachmentsByEvent(eventId) {
+  return db
+    .prepare('SELECT * FROM attachments WHERE event_id = ? ORDER BY created_at ASC')
+    .all(eventId)
+    .map(parseAttachment);
+}
+
+export function listAttachmentsByCompany(companyId) {
+  return db.prepare(`
+    SELECT a.* FROM attachments a
+    JOIN events e ON e.id = a.event_id
+    WHERE e.company_id = ?
+    ORDER BY a.created_at ASC
+  `).all(companyId).map(parseAttachment);
+}
+
+export function createAttachment({ id, eventId, kind, filename, mimetype, sizeBytes, path: relPath }) {
+  db.prepare(
+    `INSERT INTO attachments (id, event_id, kind, filename, mimetype, size_bytes, path, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, eventId, kind || 'image', filename, mimetype, sizeBytes, relPath, Date.now());
+  return parseAttachment(db.prepare('SELECT * FROM attachments WHERE id = ?').get(id));
+}
+
+export function deleteAttachment(id) {
+  db.prepare('DELETE FROM attachments WHERE id = ?').run(id);
 }

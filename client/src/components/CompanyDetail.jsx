@@ -60,18 +60,18 @@ export default function CompanyDetail({
   const [currentStage, setCurrentStage] = useState(company.currentStage || 'sourced');
 
   const [jobUrl, setJobUrl] = useState('');
-  const [fetching, setFetching] = useState(false);
+  const [fetching, setFetching] = useState(null); // null | 'og' | 'ai'
   const [fetchError, setFetchError] = useState('');
   const [sourceText, setSourceText] = useState('');
   const [sourceUrl, setSourceUrl] = useState(company.sourceUrl || '');
 
-  const handleFetch = async () => {
+  const handleFetch = async (mode) => {
     const url = jobUrl.trim();
     if (!url || fetching) return;
     setFetchError('');
-    setFetching(true);
+    setFetching(mode);
     try {
-      const result = await api.extractJob(url);
+      const result = await api.extractJob(url, mode);
       if (result.company) setName(result.company);
       if (result.role) setRole(result.role);
       setSourceUrl(result.sourceUrl || url);
@@ -82,7 +82,7 @@ export default function CompanyDetail({
     } catch (err) {
       setFetchError(err?.message || 'Fetch failed. Try entering details manually.');
     } finally {
-      setFetching(false);
+      setFetching(null);
     }
   };
 
@@ -253,55 +253,42 @@ export default function CompanyDetail({
         {isNew && (
           <>
             <div style={{ marginBottom: 16 }}>
-              <div style={sectionTitle}>
-                Paste Job URL
-                {!extractionAvailable && (
-                  <span
-                    style={{
-                      marginLeft: 8,
-                      fontSize: 10,
-                      fontWeight: 500,
-                      color: C.textMuted,
-                      textTransform: 'none',
-                      letterSpacing: 0,
-                    }}
-                  >
-                    — disabled (no OPENROUTER_API_KEY in server/.env)
-                  </span>
-                )}
-              </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   value={jobUrl}
                   onChange={(e) => setJobUrl(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleFetch()}
-                  placeholder="https://www.linkedin.com/jobs/view/..."
-                  disabled={!extractionAvailable || fetching}
+                  onKeyDown={(e) => e.key === 'Enter' && handleFetch('og')}
+                  placeholder="Job URL"
+                  disabled={!extractionAvailable || !!fetching}
                   style={{ ...inputStyle, opacity: extractionAvailable ? 1 : 0.5 }}
                 />
-                <button
-                  type="button"
-                  onClick={handleFetch}
-                  disabled={!extractionAvailable || fetching || !jobUrl.trim()}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: 6,
-                    border: 'none',
-                    background: C.accent,
-                    color: '#0F0F0F',
-                    cursor:
-                      !extractionAvailable || fetching || !jobUrl.trim()
-                        ? 'not-allowed'
-                        : 'pointer',
-                    fontFamily: 'inherit',
-                    fontSize: 13,
-                    fontWeight: 700,
-                    whiteSpace: 'nowrap',
-                    opacity: !extractionAvailable || !jobUrl.trim() ? 0.5 : 1,
-                  }}
-                >
-                  {fetching ? 'Fetching…' : 'Fetch'}
-                </button>
+                {(['og', 'ai']).map((mode) => {
+                  const disabled = !extractionAvailable || !!fetching || !jobUrl.trim();
+                  const isActive = fetching === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => handleFetch(mode)}
+                      disabled={disabled}
+                      style={{
+                        padding: '8px 14px',
+                        borderRadius: 6,
+                        border: 'none',
+                        background: C.accent,
+                        color: '#0F0F0F',
+                        cursor: disabled ? 'not-allowed' : 'pointer',
+                        fontFamily: 'inherit',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                        opacity: disabled ? 0.5 : 1,
+                      }}
+                    >
+                      {isActive ? 'Fetching…' : `Fetch ${mode.toUpperCase()}`}
+                    </button>
+                  );
+                })}
               </div>
               {fetchError && (
                 <div style={{ marginTop: 6, fontSize: 12, color: C.red }}>{fetchError}</div>

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { routes } from './routes.js';
+import { UPLOADS_DIR } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -45,6 +46,15 @@ app.use(
 );
 
 app.use(express.json({ limit: '2mb' }));
+
+// Serve user-uploaded attachments. Long max-age since we never reuse a path
+// (attachment IDs are unique per upload).
+app.use('/uploads', express.static(UPLOADS_DIR, {
+  maxAge: '7d',
+  immutable: true,
+  fallthrough: false,
+}));
+
 app.use('/api', routes);
 
 // In production the client build is copied to server/public — serve it from

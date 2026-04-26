@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Trash2, Download, Loader } from 'lucide-react';
 import EventLog from './EventLog.jsx';
+import TimelineTab from './TimelineTab.jsx';
 import NextStepsTree from './NextStepsTree.jsx';
 import * as api from '../api.js';
 
@@ -39,16 +40,16 @@ const CHANNEL_OPTIONS = [
 ];
 
 const TABS = [
-  { key: 'overview',  label: 'Overview'  },
+  { key: 'timeline',  label: 'Timeline'  },
   { key: 'contacts',  label: 'Contacts'  },
-  { key: 'activity',  label: 'Activity'  },
+  { key: 'overview',  label: 'Overview'  },
   { key: 'notes',     label: 'Notes'     },
 ];
 
 export default function CompanyDrawer({ companyId, companies, onClose, onSave, onDelete }) {
   const company = companyId ? companies.find((c) => c.id === companyId) : null;
 
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState('timeline');
 
   const [name, setName]         = useState('');
   const [role, setRole]         = useState('');
@@ -65,7 +66,7 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
 
   useEffect(() => {
     if (!company) return;
-    setTab('overview');
+    setTab('timeline');
     setName(company.name || '');
     setRole(company.role || '');
     setStage(company.currentStage || 'sourced');
@@ -216,8 +217,11 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
           {tab === 'contacts' && (
             <ContactsTab companyId={company.id} />
           )}
-          {tab === 'activity' && (
-            <EventLog companyId={company.id} />
+          {tab === 'timeline' && (
+            <TimelineTab
+              companyId={company.id}
+              onCompanyUpdated={(patch) => { if (patch.currentStage) setStage(patch.currentStage); }}
+            />
           )}
           {tab === 'notes' && (
             <NotesTab

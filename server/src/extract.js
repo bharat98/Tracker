@@ -337,7 +337,39 @@ async function callOpenRouter({ ogTitle, ogDescription, ogSiteName, text, url })
 // the HTTP response to the client reasonable.
 const MAX_SOURCE_TEXT = 100_000;
 
-export async function extractJob(rawUrl) {
+// Greenhouse fast-path: when a page embeds a Greenhouse job board widget and
+// the URL carries a gh_jid param, we can hit the Greenhouse boards API directly
+// to get a reliable title — no LLM needed, works for both 'og' and 'ai' modes.
+async function tryGreenhouseFastPath(url, html, ogSiteName) {
+  const ghJid = url.searchParams.get('gh_jid');
+  if (!ghJid) return null;
+
+  const slugMatch = html.match(/boards\.greenhouse\.io\/embed\/job_board\/js\?for=([^"'&\s]+)/i);
+  if (!slugMatch) return null;
+
+  const slug = slugMatch[1];
+  try {
+    const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${slug}/jobs/${ghJid}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const role = data?.title?.trim() || '';
+    // Prefer og:site_name (e.g. "Tipalti") over the raw board slug ("tipaltisolutions").
+    const company = data?.company?.name?.trim() || ogSiteName || slug;
+    if (role) {
+      console.log('[extract] Greenhouse API fast-path hit');
+      return { role, company };
+    }
+  } catch {
+    // Non-fatal — fall through to OG / AI paths.
+  }
+  return null;
+}
+
+// mode: 'og' (default) = try OG fast-path first, fall back to AI
+//       'ai'           = skip OG fast-path, always call the LLM
+export async function extractJob(rawUrl, mode = 'og') {
   // Fail fast if extraction isn't configured — avoids a wasted outbound fetch.
   if (!process.env.OPENROUTER_API_KEY) {
     throw Object.assign(
@@ -352,16 +384,29 @@ export async function extractJob(rawUrl) {
   const og = extractOgTags(html);
   const text = htmlToText(html);
 
-  // Fast-path: if OG tags already give us both fields, skip the LLM entirely.
-  const fromOg = parseFromOgTags(og);
-  if (fromOg?.company && fromOg?.role) {
-    console.log('[extract] OG fast-path hit — skipping LLM');
+  // Greenhouse fast-path runs before OG/AI — reliable regardless of mode.
+  const fromGreenhouse = await tryGreenhouseFastPath(url, html, og.ogSiteName);
+  if (fromGreenhouse) {
     return {
-      company: fromOg.company,
-      role: fromOg.role,
+      company: fromGreenhouse.company,
+      role: fromGreenhouse.role,
       sourceUrl: url.toString(),
       sourceText: text.slice(0, MAX_SOURCE_TEXT),
     };
+  }
+
+  if (mode !== 'ai') {
+    // Fast-path: if OG tags already give us both fields, skip the LLM entirely.
+    const fromOg = parseFromOgTags(og);
+    if (fromOg?.company && fromOg?.role) {
+      console.log('[extract] OG fast-path hit — skipping LLM');
+      return {
+        company: fromOg.company,
+        role: fromOg.role,
+        sourceUrl: url.toString(),
+        sourceText: text.slice(0, MAX_SOURCE_TEXT),
+      };
+    }
   }
 
   const { company, role } = await callOpenRouter({ ...og, text, url: url.toString() });

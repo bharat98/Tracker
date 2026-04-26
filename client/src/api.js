@@ -39,7 +39,7 @@ export async function initDb() {
   }
 }
 
-export const extractJob = (url) => request('POST', '/extract-job', { url });
+export const extractJob = (url, mode = 'og') => request('POST', '/extract-job', { url, mode });
 
 export const syncToGithub = ({ companyId, sourceUrl, sourceText, force }) =>
   request('POST', '/github/sync', { companyId, sourceUrl, sourceText, force: !!force });
@@ -75,9 +75,32 @@ export const nlLogCommit = (parsed) => request('POST', '/ai/nl-log/commit', { pa
 
 export const fetchLinkedIn = (url) => request('POST', '/linkedin-lookup', { url });
 
+export const listTimeline = (companyId) => request('GET', `/companies/${companyId}/timeline`);
+
+export async function postTimelineEntry(companyId, { text, url, image }) {
+  const fd = new FormData();
+  if (text)  fd.append('text', text);
+  if (url)   fd.append('url',  url);
+  if (image) fd.append('image', image, image.name);
+  const res = await fetch(`${BASE}/companies/${companyId}/timeline`, { method: 'POST', body: fd });
+  if (!res.ok) {
+    let parsed = null;
+    const t = await res.text().catch(() => '');
+    try { parsed = JSON.parse(t); } catch {}
+    const err = new Error(parsed?.error || `Timeline entry → ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 export const listContacts  = (companyId)             => request('GET',    `/companies/${companyId}/contacts`);
 export const createContact = (companyId, contact)    => request('POST',   `/companies/${companyId}/contacts`, contact);
 export const deleteContact = (companyId, contactId)  => request('DELETE', `/companies/${companyId}/contacts/${contactId}`);
+
+export const listFitness = () => request('GET', '/fitness');
+export const createFitnessLog = (log) => request('POST', '/fitness', log);
+export const deleteFitnessLog = (id) => request('DELETE', `/fitness/${id}`);
 
 export async function uploadResume(companyId, file) {
   const fd = new FormData();

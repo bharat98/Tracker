@@ -14,6 +14,7 @@ import {
   Bell,
   Plus,
   Sparkles,
+  Activity,
 } from 'lucide-react';
 import { C, DEFAULT_STATUS_LABELS, uid } from './theme.js';
 import * as api from './api.js';
@@ -26,6 +27,7 @@ import DashboardPage from './pages/Dashboard.jsx';
 import CompaniesPage from './pages/Companies.jsx';
 import FollowupsPage from './pages/Followups.jsx';
 import TemplatesPage from './pages/Templates.jsx';
+import FitnessPage from './pages/Fitness.jsx';
 
 const makeBlankCompany = () => ({
   id: uid(),
@@ -81,6 +83,9 @@ function Sidebar() {
         <NavLink to="/templates" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           <FileText size={16} /> Templates
         </NavLink>
+        <NavLink to="/fitness" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          <Activity size={16} /> Fitness
+        </NavLink>
       </nav>
       <div style={{ marginTop: 'auto' }}>
         <div className="label" style={{ padding: '0 0.5rem' }}>v2.0 · local-first</div>
@@ -94,6 +99,7 @@ const TITLE_MAP = {
   '/companies': 'Companies',
   '/followups': 'Follow-ups',
   '/templates': 'Templates',
+  '/fitness': 'Fitness',
 };
 
 function TopBar({ onAddCompany, onQuickLog }) {
@@ -234,6 +240,7 @@ function AppRoutes({
         />
         <Route path="/followups" element={<FollowupsPage />} />
         <Route path="/templates" element={<TemplatesPage />} />
+        <Route path="/fitness" element={<FitnessPage />} />
       </Routes>
     </Shell>
   );

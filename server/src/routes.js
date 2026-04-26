@@ -1,9 +1,13 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
+import fs from 'node:fs';
+import path from 'node:path';
 import * as db from './db.js';
+import { uid } from './constants.js';
 import { extractJob } from './extract.js';
 import { parseNlLog, commitNlLog } from './nllog.js';
+import { parseTimelineEntry } from './timeline.js';
 import { syncCompany, uploadResumeFile, isConfigured as githubConfigured } from './github.js';
 import { fetchLinkedInProfile } from './linkedin.js';
 
@@ -22,6 +26,27 @@ const resumeUpload = multer({
     cb(Object.assign(new Error('Only PDF, DOC, or DOCX files are allowed.'), { status: 400 }));
   },
 });
+
+// Timeline attachment upload: images only, 8 MB cap, kept in memory so we can
+// write to the filesystem under a stable attachment id.
+const ATTACHMENT_MIMETYPES = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+]);
+const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (ATTACHMENT_MIMETYPES.has(file.mimetype)) return cb(null, true);
+    cb(Object.assign(new Error('Only PNG, JPEG, WEBP, or GIF images are allowed.'), { status: 400 }));
+  },
+});
+
+const EXT_FOR_MIME = {
+  'image/png':  '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif':  '.gif',
+};
 
 export const routes = Router();
 
@@ -104,6 +129,112 @@ routes.post('/companies/:id/events', (req, res) => {
   res.status(201).json(created);
 });
 
+// GET /companies/:id/timeline — events bundled with attachments
+routes.get('/companies/:id/timeline', (req, res) => {
+  const company = db.getCompany(req.params.id);
+  if (!company) return res.status(404).json({ error: 'Company not found.' });
+  res.json(db.listEventsWithAttachments(req.params.id));
+});
+
+// POST /companies/:id/timeline — multipart entry: text + optional URL + optional image.
+// LLM parses → event row + optional contact upsert + optional stage change.
+routes.post('/companies/:id/timeline', (req, res, next) => {
+  attachmentUpload.single('image')(req, res, (err) => {
+    if (err) return res.status(err.status || 400).json({ error: err.message || 'Upload failed.' });
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const company = db.getCompany(req.params.id);
+    if (!company) return res.status(404).json({ error: 'Company not found.' });
+
+    const text = (req.body?.text || '').trim();
+    const url  = (req.body?.url  || '').trim();
+    const file = req.file || null;
+    if (!text && !url && !file) {
+      return res.status(400).json({ error: 'Provide at least text, a URL, or an image.' });
+    }
+
+    // Parse with LLM (text required as the steering signal). If only image+URL,
+    // synthesise a minimal text from the URL so the model has something to work on.
+    const promptText = text || (url ? `Logged a URL: ${url}` : 'Attached a screenshot.');
+    const parsed = await parseTimelineEntry({
+      text: promptText,
+      url,
+      hasImage: !!file,
+      company,
+    });
+
+    // Build event details from parsed + raw URL.
+    const details = {};
+    if (url) details.url = url;
+    if (parsed.event.summary && parsed.event.summary !== text) details.summary = parsed.event.summary;
+
+    // Persist event.
+    const event = db.createEvent({
+      companyId: req.params.id,
+      kind:      parsed.event.kind,
+      actor:     parsed.event.actor,
+      channel:   parsed.event.channel,
+      details,
+      notes:     text || parsed.event.summary,
+      timestamp: Date.now(),
+    });
+
+    // Persist attachment if uploaded.
+    let attachment = null;
+    if (file) {
+      const attId = uid();
+      const ext   = EXT_FOR_MIME[file.mimetype] || '';
+      const relPath = path.join(event.id, attId + ext);
+      const absPath = path.join(db.UPLOADS_DIR, relPath);
+      fs.mkdirSync(path.dirname(absPath), { recursive: true });
+      fs.writeFileSync(absPath, file.buffer);
+      attachment = db.createAttachment({
+        id: attId,
+        eventId: event.id,
+        kind: 'image',
+        filename: file.originalname,
+        mimetype: file.mimetype,
+        sizeBytes: file.size,
+        path: relPath.replace(/\\/g, '/'),
+      });
+    }
+
+    // Upsert contact if extracted.
+    let contact = null;
+    if (parsed.contact) {
+      const c = parsed.contact;
+      const result = db.upsertContact({
+        companyId:   req.params.id,
+        firstName:   c.first_name,
+        lastName:    c.last_name,
+        title:       c.title,
+        role:        c.role_type,
+        linkedinUrl: c.linkedin_url,
+        email:       c.email,
+        sourceUrl:   c.source_url || url,
+      });
+      contact = { ...result.contact, _created: result.created };
+    }
+
+    // Apply stage change if extracted.
+    let stageChanged = null;
+    if (parsed.stage_change && parsed.stage_change !== company.currentStage) {
+      db.updateCompany(req.params.id, { currentStage: parsed.stage_change });
+      stageChanged = { from: company.currentStage, to: parsed.stage_change };
+    }
+
+    res.json({
+      event: { ...event, attachments: attachment ? [attachment] : [] },
+      contact,
+      stageChanged,
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Timeline entry failed.' });
+  }
+});
+
 // Cross-company event query: GET /events?kind=&channel=&actor=&after=&before=
 routes.get('/events', (req, res) => {
   const { kind, channel, actor, after, before, companyId } = req.query;
@@ -175,8 +306,8 @@ routes.put('/tweaks', (req, res) => {
 
 routes.post('/extract-job', extractLimiter, async (req, res) => {
   try {
-    const { url } = req.body || {};
-    const result = await extractJob(url);
+    const { url, mode } = req.body || {};
+    const result = await extractJob(url, mode === 'ai' ? 'ai' : 'og');
     res.json(result);
   } catch (err) {
     const status = err.status || 500;
@@ -299,4 +430,32 @@ routes.post('/ai/nl-log/commit', async (req, res) => {
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message || 'Commit failed.' });
   }
+});
+
+// ── Fitness logs ───────────────────────────────────────────────────────────────
+routes.get('/fitness', (req, res) => {
+  res.json(db.listFitnessLogs());
+});
+
+routes.post('/fitness', (req, res) => {
+  const { date, muscle_kg, fat_kg, water_kg, notes } = req.body || {};
+  if (!date) return res.status(400).json({ error: 'date is required' });
+  try {
+    const log = db.createFitnessLog({
+      id: uid(),
+      date,
+      muscle_kg: +muscle_kg || 0,
+      fat_kg: +fat_kg || 0,
+      water_kg: +water_kg || 0,
+      notes,
+    });
+    res.json(log);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+routes.delete('/fitness/:id', (req, res) => {
+  db.deleteFitnessLog(req.params.id);
+  res.status(204).end();
 });
