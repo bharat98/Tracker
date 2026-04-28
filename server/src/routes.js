@@ -434,19 +434,23 @@ routes.post('/ai/nl-log/commit', async (req, res) => {
 
 // ── Fitness logs ───────────────────────────────────────────────────────────────
 routes.get('/fitness', (req, res) => {
-  res.json(db.listFitnessLogs());
+  const user = (req.query.user || 'bharat').toString();
+  res.json(db.listFitnessLogs(user));
 });
 
 routes.post('/fitness', (req, res) => {
-  const { date, muscle_kg, fat_kg, water_kg, notes } = req.body || {};
+  const { user, date, muscle_kg, fat_kg, water_kg, total_kg, body_fat_pct, notes } = req.body || {};
   if (!date) return res.status(400).json({ error: 'date is required' });
   try {
     const log = db.createFitnessLog({
       id: uid(),
+      user: user || 'bharat',
       date,
-      muscle_kg: +muscle_kg || 0,
-      fat_kg: +fat_kg || 0,
-      water_kg: +water_kg || 0,
+      muscle_kg:    +muscle_kg    || 0,
+      fat_kg:       +fat_kg       || 0,
+      water_kg:     +water_kg     || 0,
+      total_kg:     +total_kg     || 0,
+      body_fat_pct: +body_fat_pct || 0,
       notes,
     });
     res.json(log);

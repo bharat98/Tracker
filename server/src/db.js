@@ -78,13 +78,17 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
   CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company_id);
   CREATE TABLE IF NOT EXISTS fitness_logs (
-    id         TEXT PRIMARY KEY,
-    date       TEXT NOT NULL UNIQUE,
-    muscle_kg  REAL NOT NULL DEFAULT 0,
-    fat_kg     REAL NOT NULL DEFAULT 0,
-    water_kg   REAL NOT NULL DEFAULT 0,
-    notes      TEXT NOT NULL DEFAULT '',
-    created_at INTEGER NOT NULL
+    id            TEXT PRIMARY KEY,
+    user          TEXT NOT NULL DEFAULT 'bharat',
+    date          TEXT NOT NULL,
+    muscle_kg     REAL NOT NULL DEFAULT 0,
+    fat_kg        REAL NOT NULL DEFAULT 0,
+    water_kg      REAL NOT NULL DEFAULT 0,
+    total_kg      REAL NOT NULL DEFAULT 0,
+    body_fat_pct  REAL NOT NULL DEFAULT 0,
+    notes         TEXT NOT NULL DEFAULT '',
+    created_at    INTEGER NOT NULL,
+    UNIQUE(user, date)
   );
   CREATE TABLE IF NOT EXISTS attachments (
     id          TEXT PRIMARY KEY,
@@ -124,6 +128,34 @@ if (has('resume_version') && !has('resume_link')) {
   db.exec(`ALTER TABLE companies RENAME COLUMN resume_version TO resume_link`);
 } else if (!has('resume_link')) {
   db.exec(`ALTER TABLE companies ADD COLUMN resume_link TEXT NOT NULL DEFAULT ''`);
+}
+
+// fitness_logs gained per-user support, scale-weight, and body-fat % after the
+// initial single-user schema. The old table had UNIQUE(date); the new shape has
+// UNIQUE(user, date) so each user owns their own daily row. SQLite can't drop a
+// UNIQUE column constraint, so do a one-time table rebuild gated on the absence
+// of the `user` column.
+const fitnessCols = db.prepare('PRAGMA table_info(fitness_logs)').all();
+if (!fitnessCols.some((c) => c.name === 'user')) {
+  db.exec(`
+    CREATE TABLE fitness_logs_new (
+      id            TEXT PRIMARY KEY,
+      user          TEXT NOT NULL DEFAULT 'bharat',
+      date          TEXT NOT NULL,
+      muscle_kg     REAL NOT NULL DEFAULT 0,
+      fat_kg        REAL NOT NULL DEFAULT 0,
+      water_kg      REAL NOT NULL DEFAULT 0,
+      total_kg      REAL NOT NULL DEFAULT 0,
+      body_fat_pct  REAL NOT NULL DEFAULT 0,
+      notes         TEXT NOT NULL DEFAULT '',
+      created_at    INTEGER NOT NULL,
+      UNIQUE(user, date)
+    );
+    INSERT INTO fitness_logs_new (id, user, date, muscle_kg, fat_kg, water_kg, total_kg, body_fat_pct, notes, created_at)
+      SELECT id, 'bharat', date, muscle_kg, fat_kg, water_kg, 0, 0, notes, created_at FROM fitness_logs;
+    DROP TABLE fitness_logs;
+    ALTER TABLE fitness_logs_new RENAME TO fitness_logs;
+  `);
 }
 
 // source_url on contacts: where the user found this person (a LinkedIn post URL,
@@ -568,18 +600,20 @@ export function deleteContact(id) {
 }
 
 // ── Fitness logs ───────────────────────────────────────────────────────────────
-export function listFitnessLogs() {
-  return db.prepare('SELECT * FROM fitness_logs ORDER BY date ASC').all();
+export function listFitnessLogs(user = 'bharat') {
+  return db.prepare('SELECT * FROM fitness_logs WHERE user = ? ORDER BY date ASC').all(user);
 }
 
-export function createFitnessLog({ id, date, muscle_kg, fat_kg, water_kg, notes }) {
+export function createFitnessLog({ id, user, date, muscle_kg, fat_kg, water_kg, total_kg, body_fat_pct, notes }) {
+  const u = user || 'bharat';
   db.prepare(
-    `INSERT INTO fitness_logs (id, date, muscle_kg, fat_kg, water_kg, notes, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(date) DO UPDATE SET muscle_kg=excluded.muscle_kg, fat_kg=excluded.fat_kg,
-       water_kg=excluded.water_kg, notes=excluded.notes`
-  ).run(id, date, muscle_kg, fat_kg, water_kg, notes || '', Date.now());
-  return db.prepare('SELECT * FROM fitness_logs WHERE date = ?').get(date);
+    `INSERT INTO fitness_logs (id, user, date, muscle_kg, fat_kg, water_kg, total_kg, body_fat_pct, notes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user, date) DO UPDATE SET muscle_kg=excluded.muscle_kg, fat_kg=excluded.fat_kg,
+       water_kg=excluded.water_kg, total_kg=excluded.total_kg, body_fat_pct=excluded.body_fat_pct,
+       notes=excluded.notes`
+  ).run(id, u, date, muscle_kg, fat_kg, water_kg, total_kg, body_fat_pct, notes || '', Date.now());
+  return db.prepare('SELECT * FROM fitness_logs WHERE user = ? AND date = ?').get(u, date);
 }
 
 export function deleteFitnessLog(id) {

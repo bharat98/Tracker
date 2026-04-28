@@ -98,7 +98,7 @@ export const listContacts  = (companyId)             => request('GET',    `/comp
 export const createContact = (companyId, contact)    => request('POST',   `/companies/${companyId}/contacts`, contact);
 export const deleteContact = (companyId, contactId)  => request('DELETE', `/companies/${companyId}/contacts/${contactId}`);
 
-export const listFitness = () => request('GET', '/fitness');
+export const listFitness = (user = 'bharat') => request('GET', `/fitness?user=${encodeURIComponent(user)}`);
 export const createFitnessLog = (log) => request('POST', '/fitness', log);
 export const deleteFitnessLog = (id) => request('DELETE', `/fitness/${id}`);
 
