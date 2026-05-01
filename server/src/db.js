@@ -195,6 +195,22 @@ if (!hasEventCol('raw_text')) {
   db.exec(`ALTER TABLE events ADD COLUMN raw_text TEXT NOT NULL DEFAULT ''`);
 }
 
+// Heal any drift in companies.{hm_established, recruiter_established} that
+// might have accumulated when those columns were added but the projection
+// logic in syncFlatContactCols wasn't yet live (hot-reload windows during
+// development). Idempotent — safe to run on every boot.
+db.exec(`
+  UPDATE companies SET
+    hm_established = COALESCE((
+      SELECT MAX(established) FROM contacts
+      WHERE contacts.company_id = companies.id AND contacts.role = 'hiring_manager'
+    ), 0),
+    recruiter_established = COALESCE((
+      SELECT MAX(established) FROM contacts
+      WHERE contacts.company_id = companies.id AND contacts.role = 'recruiter'
+    ), 0)
+`);
+
 // One-time migration: copy flat contact columns → contacts table
 const contactsMigrated = db.prepare("SELECT value FROM tweaks WHERE key = 'contacts_migrated_v1'").get();
 if (!contactsMigrated) {

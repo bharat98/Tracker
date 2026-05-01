@@ -32,7 +32,7 @@ function EstablishedDot() {
   return (
     <span
       title="Contact established"
-      style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0, boxShadow: '0 0 0 1px rgba(34,197,94,0.25)' }}
+      style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0 }}
     />
   );
 }
