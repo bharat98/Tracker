@@ -96,6 +96,7 @@ export async function postTimelineEntry(companyId, { text, url, image }) {
 
 export const listContacts  = (companyId)             => request('GET',    `/companies/${companyId}/contacts`);
 export const createContact = (companyId, contact)    => request('POST',   `/companies/${companyId}/contacts`, contact);
+export const updateContact = (companyId, contactId, patch) => request('PUT', `/companies/${companyId}/contacts/${contactId}`, patch);
 export const deleteContact = (companyId, contactId)  => request('DELETE', `/companies/${companyId}/contacts/${contactId}`);
 
 export const listFitness = (user = 'bharat') => request('GET', `/fitness?user=${encodeURIComponent(user)}`);

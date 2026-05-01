@@ -596,6 +596,30 @@ export function upsertContact(input) {
   return { contact: createContact(input), created: true };
 }
 
+export function updateContact(id, input) {
+  const colMap = {
+    title:       'title',
+    firstName:   'first_name',
+    lastName:    'last_name',
+    linkedinUrl: 'linkedin_url',
+    email:       'email',
+    notes:       'notes',
+    role:        'role',
+  };
+  const cols = [];
+  const vals = [];
+  for (const k of Object.keys(colMap)) {
+    if (Object.prototype.hasOwnProperty.call(input, k)) {
+      cols.push(`${colMap[k]} = ?`);
+      vals.push(input[k] ?? '');
+    }
+  }
+  if (!cols.length) return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
+  vals.push(id);
+  db.prepare(`UPDATE contacts SET ${cols.join(', ')} WHERE id = ?`).run(...vals);
+  return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
+}
+
 export function deleteContact(id) {
   db.prepare('DELETE FROM contacts WHERE id = ?').run(id);
 }

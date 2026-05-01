@@ -289,6 +289,14 @@ routes.post('/companies/:id/contacts', (req, res) => {
   res.status(201).json(contact);
 });
 
+routes.put('/companies/:id/contacts/:contactId', (req, res) => {
+  if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });
+  const updated = db.updateContact(req.params.contactId, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'Contact not found.' });
+  syncFlatContactCols(req.params.id);
+  res.json(updated);
+});
+
 routes.delete('/companies/:id/contacts/:contactId', (req, res) => {
   db.deleteContact(req.params.contactId);
   syncFlatContactCols(req.params.id);
