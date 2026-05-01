@@ -216,6 +216,18 @@ routes.post('/companies/:id/timeline', (req, res, next) => {
         sourceUrl:   c.source_url || url,
       });
       contact = { ...result.contact, _created: result.created };
+
+      // Auto-flip "established" when an inbound response from an HM or recruiter
+      // arrives — saves the user from having to tick the box manually.
+      const isInboundResponse =
+        parsed.event.actor === 'them' && parsed.event.kind === 'responded';
+      const isOutreachRole =
+        c.role_type === 'hm' || c.role_type === 'hiring_manager' || c.role_type === 'recruiter';
+      if (isInboundResponse && isOutreachRole && !result.contact.established) {
+        db.updateContact(result.contact.id, { established: true });
+        syncFlatContactCols(req.params.id);
+        contact.established = true;
+      }
     }
 
     // Apply stage change if extracted.
@@ -268,12 +280,15 @@ function syncFlatContactCols(companyId) {
   const rec = contacts.find((c) => c.role === 'recruiter');
   const ref = contacts.find((c) => c.role === 'referral');
   const name = (c) => [c?.firstName, c?.lastName].filter(Boolean).join(' ');
+  const anyEstablished = (role) => contacts.some((c) => c.role === role && c.established);
   db.updateCompany(companyId, {
     hmName:               name(hm),
     recruiterName:        name(rec),
     recruiterCompany:     rec?.notes || '',
     referralName:         name(ref),
     referralRelationship: ref?.notes || '',
+    hmEstablished:        anyEstablished('hiring_manager'),
+    recruiterEstablished: anyEstablished('recruiter'),
   });
 }
 

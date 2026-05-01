@@ -28,6 +28,15 @@ function timeAgo(ms) {
   return `${days}d ago`;
 }
 
+function EstablishedDot() {
+  return (
+    <span
+      title="Contact established"
+      style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0, boxShadow: '0 0 0 1px rgba(34,197,94,0.25)' }}
+    />
+  );
+}
+
 const STAGE_COLUMNS = [
   { key: 'sourced',      label: 'Sourced' },
   { key: 'networked',    label: 'Networked' },
@@ -461,8 +470,18 @@ function KanbanCard({ company, onOpen, onDelete }) {
         )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.55rem' }}>
           <span className={`pill pill-${p}`}>{p}</span>
-          {company.hmName && <span className="pill pill-hm">HM</span>}
-          {company.recruiterName && <span className="pill pill-recruiter">Rec</span>}
+          {company.hmName && (
+            <span className="pill pill-hm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+              HM
+              {company.hmEstablished && <EstablishedDot />}
+            </span>
+          )}
+          {company.recruiterName && (
+            <span className="pill pill-recruiter" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+              Rec
+              {company.recruiterEstablished && <EstablishedDot />}
+            </span>
+          )}
           {company.referralName && <span className="pill pill-referral">Ref</span>}
         </div>
       </div>

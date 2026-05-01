@@ -161,8 +161,23 @@ if (!fitnessCols.some((c) => c.name === 'user')) {
 // source_url on contacts: where the user found this person (a LinkedIn post URL,
 // a tweet, an article — the evidence behind "this person is the recruiter").
 const contactCols = db.prepare('PRAGMA table_info(contacts)').all();
-if (!contactCols.some((c) => c.name === 'source_url')) {
+const hasContactCol = (name) => contactCols.some((c) => c.name === name);
+if (!hasContactCol('source_url')) {
   db.exec(`ALTER TABLE contacts ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`);
+}
+// `established` flips true once a contact has actually responded. Drives the
+// green dot on the HM/REC pill on the kanban card.
+if (!hasContactCol('established')) {
+  db.exec(`ALTER TABLE contacts ADD COLUMN established INTEGER NOT NULL DEFAULT 0`);
+}
+
+// Project per-role "any contact established" flags onto companies so the kanban
+// card can render the green dot from a single row read.
+if (!has('hm_established')) {
+  db.exec(`ALTER TABLE companies ADD COLUMN hm_established INTEGER NOT NULL DEFAULT 0`);
+}
+if (!has('recruiter_established')) {
+  db.exec(`ALTER TABLE companies ADD COLUMN recruiter_established INTEGER NOT NULL DEFAULT 0`);
 }
 
 // One-time migration: copy flat contact columns → contacts table
@@ -272,6 +287,8 @@ const parseCompany = (row) => ({
   recruiterCompany: row.recruiter_company || '',
   currentStage: row.current_stage || 'sourced',
   resumeLink: row.resume_link || '',
+  hmEstablished: !!row.hm_established,
+  recruiterEstablished: !!row.recruiter_established,
   createdAt: row.created_at,
 });
 
@@ -356,13 +373,15 @@ const FIELD_MAP = {
   referralRelationship: 'referral_relationship',
   hmName: 'hm_name',
   hmContactedDirectly: 'hm_contacted_directly',
+  hmEstablished: 'hm_established',
   recruiterName: 'recruiter_name',
   recruiterCompany: 'recruiter_company',
+  recruiterEstablished: 'recruiter_established',
   currentStage: 'current_stage',
   resumeLink: 'resume_link',
 };
 const JSON_FIELDS = new Set(['statuses', 'nextSteps']);
-const BOOL_FIELDS = new Set(['hmContactedDirectly']);
+const BOOL_FIELDS = new Set(['hmContactedDirectly', 'hmEstablished', 'recruiterEstablished']);
 
 export function updateCompany(id, patch) {
   const keys = Object.keys(patch).filter((k) => FIELD_MAP[k] !== undefined);
@@ -524,6 +543,7 @@ const parseContact = (row) => ({
   email:       row.email       || '',
   notes:       row.notes       || '',
   sourceUrl:   row.source_url  || '',
+  established: !!row.established,
   createdAt:   row.created_at,
 });
 
@@ -538,8 +558,8 @@ export function createContact(input) {
   const now = Date.now();
   const id  = input.id || uid();
   db.prepare(
-    `INSERT INTO contacts (id, company_id, role, title, first_name, last_name, linkedin_url, email, notes, source_url, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO contacts (id, company_id, role, title, first_name, last_name, linkedin_url, email, notes, source_url, established, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.companyId,
@@ -551,6 +571,7 @@ export function createContact(input) {
     input.email       || '',
     input.notes       || '',
     input.sourceUrl   || '',
+    input.established ? 1 : 0,
     now
   );
   return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
@@ -605,13 +626,15 @@ export function updateContact(id, input) {
     email:       'email',
     notes:       'notes',
     role:        'role',
+    established: 'established',
   };
   const cols = [];
   const vals = [];
   for (const k of Object.keys(colMap)) {
     if (Object.prototype.hasOwnProperty.call(input, k)) {
       cols.push(`${colMap[k]} = ?`);
-      vals.push(input[k] ?? '');
+      if (k === 'established') vals.push(input[k] ? 1 : 0);
+      else vals.push(input[k] ?? '');
     }
   }
   if (!cols.length) return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));

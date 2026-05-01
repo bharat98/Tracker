@@ -355,6 +355,7 @@ function ContactsTab({ companyId }) {
       linkedinUrl: contact.linkedinUrl || '',
       email:       contact.email       || '',
       notes:       contact.notes       || '',
+      established: !!contact.established,
     });
   };
 
@@ -521,11 +522,28 @@ function ContactAddForm({ sec, draft, onDraftChange, onCancel, onSave, hasExisti
           {fetchMsg}
         </div>
       )}
+      {(sec.role === 'hiring_manager' || sec.role === 'recruiter') && (
+        <EstablishedToggle draft={draft} onDraftChange={onDraftChange} />
+      )}
       <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
         <button className="btn btn-ghost"    onClick={onCancel} style={{ fontSize: '0.82rem' }}>Cancel</button>
         <button className="btn btn-primary"  onClick={onSave}   style={{ fontSize: '0.82rem' }}>Save</button>
       </div>
     </div>
+  );
+}
+
+function EstablishedToggle({ draft, onDraftChange }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.6rem', cursor: 'pointer', userSelect: 'none' }}>
+      <input
+        type="checkbox"
+        checked={!!draft.established}
+        onChange={(e) => onDraftChange({ established: e.target.checked })}
+        style={{ cursor: 'pointer' }}
+      />
+      Contact established (they've replied)
+    </label>
   );
 }
 
@@ -537,7 +555,12 @@ function ContactRow({ contact, sec, onDelete, onEdit }) {
         {sec.showTitle && contact.title && (
           <div className="label" style={{ marginBottom: '0.15rem' }}>{contact.title}</div>
         )}
-        <div style={{ fontWeight: 500, fontSize: '0.9rem' }}>{displayName}</div>
+        <div style={{ fontWeight: 500, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          {displayName}
+          {contact.established && (
+            <span title="Contact established" style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0 }} />
+          )}
+        </div>
         {contact.linkedinUrl && (
           <a href={contact.linkedinUrl} target="_blank" rel="noreferrer"
             style={{ fontSize: '0.8rem', color: 'var(--accent)', display: 'block' }}>
@@ -611,6 +634,9 @@ function ContactEditForm({ sec, draft, onDraftChange, onCancel, onSave }) {
           onChange={(e) => onDraftChange({ notes: e.target.value })}
           style={{ marginBottom: '0.25rem' }}
         />
+      )}
+      {(sec.role === 'hiring_manager' || sec.role === 'recruiter') && (
+        <EstablishedToggle draft={draft} onDraftChange={onDraftChange} />
       )}
       <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
         <button className="btn btn-ghost"   onClick={onCancel} style={{ fontSize: '0.82rem' }}>Cancel</button>
