@@ -452,9 +452,9 @@ function KanbanCard({ company, onOpen, onDelete }) {
             {company.role}
           </div>
         )}
-        {timeAgo(company.updatedAt) && (
+        {timeAgo(company.createdAt) && (
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-            {timeAgo(company.updatedAt)}
+            {timeAgo(company.createdAt)}
           </div>
         )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.55rem' }}>
