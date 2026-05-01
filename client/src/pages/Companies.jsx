@@ -20,6 +20,14 @@ import * as api from '../api.js';
 
 const PRE_APPLIED_COLS = new Set(['sourced', 'networked']);
 
+function timeAgo(ms) {
+  if (!ms) return null;
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  return `${days}d ago`;
+}
+
 const STAGE_COLUMNS = [
   { key: 'sourced',      label: 'Sourced' },
   { key: 'networked',    label: 'Networked' },
@@ -442,6 +450,11 @@ function KanbanCard({ company, onOpen, onDelete }) {
         {company.role && (
           <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
             {company.role}
+          </div>
+        )}
+        {timeAgo(company.updatedAt) && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+            {timeAgo(company.updatedAt)}
           </div>
         )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.55rem' }}>

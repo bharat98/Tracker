@@ -272,6 +272,7 @@ const parseCompany = (row) => ({
   recruiterCompany: row.recruiter_company || '',
   currentStage: row.current_stage || 'sourced',
   resumeLink: row.resume_link || '',
+  updatedAt: row.updated_at,
 });
 
 const parseEvent = (row) => ({
