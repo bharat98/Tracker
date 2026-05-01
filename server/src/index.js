@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { routes } from './routes.js';
-import { UPLOADS_DIR } from './db.js';
+import { UPLOADS_DIR, resyncAllFlatContactCols } from './db.js';
 import { startWorker } from './extractor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -75,5 +75,7 @@ app.listen(PORT, () => {
   if (!process.env.OPENROUTER_API_KEY) {
     console.log('  (URL extraction disabled — no OPENROUTER_API_KEY in env)');
   }
+  const synced = resyncAllFlatContactCols();
+  console.log(`[boot] resynced flat contact columns for ${synced} companies`);
   startWorker();
 });

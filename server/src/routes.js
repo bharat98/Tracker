@@ -207,9 +207,6 @@ routes.post('/companies/:id/timeline', (req, res, next) => {
   }
 });
 
-// Export the helper so the extractor module (which runs outside the request
-// lifecycle) can re-apply the same contact + stage-change side effects.
-export { syncFlatContactCols };
 
 // Cross-company event query: GET /events?kind=&channel=&actor=&after=&before=
 routes.get('/events', (req, res) => {
@@ -236,25 +233,9 @@ routes.delete('/events/:id', (req, res) => {
 });
 
 // ── Contacts ─────────────────────────────────────────────────────────────────
-// Helper: after any contact write/delete, keep the legacy flat columns in sync
-// so kanban card pills (which read from the company row) stay accurate.
-function syncFlatContactCols(companyId) {
-  const contacts = db.listContacts(companyId);
-  const hm  = contacts.find((c) => c.role === 'hiring_manager');
-  const rec = contacts.find((c) => c.role === 'recruiter');
-  const ref = contacts.find((c) => c.role === 'referral');
-  const name = (c) => [c?.firstName, c?.lastName].filter(Boolean).join(' ');
-  const anyEstablished = (role) => contacts.some((c) => c.role === role && c.established);
-  db.updateCompany(companyId, {
-    hmName:               name(hm),
-    recruiterName:        name(rec),
-    recruiterCompany:     rec?.notes || '',
-    referralName:         name(ref),
-    referralRelationship: ref?.notes || '',
-    hmEstablished:        anyEstablished('hiring_manager'),
-    recruiterEstablished: anyEstablished('recruiter'),
-  });
-}
+// Sync helper lives in db.js (so the background extractor can call it without
+// importing routes). Re-export the same name for the existing callers below.
+const syncFlatContactCols = db.syncFlatContactCols;
 
 routes.get('/companies/:id/contacts', (req, res) => {
   if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });

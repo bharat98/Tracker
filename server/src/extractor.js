@@ -10,7 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as db from './db.js';
 import { parseTimelineEntry } from './timeline.js';
-import { syncFlatContactCols } from './routes.js';
+
+const syncFlatContactCols = db.syncFlatContactCols;
 
 const POLL_MS = 1500;
 const MAX_PER_TICK = 3;

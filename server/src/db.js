@@ -195,21 +195,13 @@ if (!hasEventCol('raw_text')) {
   db.exec(`ALTER TABLE events ADD COLUMN raw_text TEXT NOT NULL DEFAULT ''`);
 }
 
-// Heal any drift in companies.{hm_established, recruiter_established} that
-// might have accumulated when those columns were added but the projection
-// logic in syncFlatContactCols wasn't yet live (hot-reload windows during
-// development). Idempotent — safe to run on every boot.
-db.exec(`
-  UPDATE companies SET
-    hm_established = COALESCE((
-      SELECT MAX(established) FROM contacts
-      WHERE contacts.company_id = companies.id AND contacts.role = 'hiring_manager'
-    ), 0),
-    recruiter_established = COALESCE((
-      SELECT MAX(established) FROM contacts
-      WHERE contacts.company_id = companies.id AND contacts.role = 'recruiter'
-    ), 0)
-`);
+// Normalise legacy role aliases. The LLM extractor (timeline.js) emits
+// role_type='hm', while the contact form uses 'hiring_manager' — both ended
+// up in the DB. Canonicalise to 'hiring_manager' so syncFlatContactCols and
+// the kanban card pills don't have to know about both spellings.
+db.exec(`UPDATE contacts SET role = 'hiring_manager' WHERE role = 'hm'`);
+db.exec(`UPDATE contacts SET role = 'recruiter'      WHERE role = 'rec'`);
+db.exec(`UPDATE contacts SET role = 'referral'       WHERE role = 'ref'`);
 
 // One-time migration: copy flat contact columns → contacts table
 const contactsMigrated = db.prepare("SELECT value FROM tweaks WHERE key = 'contacts_migrated_v1'").get();
@@ -608,7 +600,7 @@ export function createContact(input) {
   ).run(
     id,
     input.companyId,
-    input.role        || 'other',
+    canonicalContactRole(input.role),
     input.title       || '',
     input.firstName   || '',
     input.lastName    || '',
@@ -645,7 +637,7 @@ export function upsertContact(input) {
     keep('linkedinUrl', input.linkedinUrl);
     keep('email',       input.email);
     keep('sourceUrl',   input.sourceUrl);
-    keep('role',        input.role !== 'other' ? input.role : '');
+    keep('role',        input.role && input.role !== 'other' ? canonicalContactRole(input.role) : '');
     if (Object.keys(patch).length) {
       const cols = [];
       const vals = [];
@@ -690,6 +682,44 @@ export function updateContact(id, input) {
 
 export function deleteContact(id) {
   db.prepare('DELETE FROM contacts WHERE id = ?').run(id);
+}
+
+// Canonicalise a role string from the LLM or form into the value we store.
+// Keeps DB reads simple — sync and the kanban card only handle the canonical
+// names ('hiring_manager', 'recruiter', 'referral', 'other').
+export function canonicalContactRole(raw) {
+  const r = (raw || '').toLowerCase();
+  if (r === 'hm' || r === 'hiring_manager') return 'hiring_manager';
+  if (r === 'rec' || r === 'recruiter')      return 'recruiter';
+  if (r === 'ref' || r === 'referral')       return 'referral';
+  return 'other';
+}
+
+// Project per-role contact info onto the company row so the kanban card can
+// render its pills + green-dot status from a single row read. Called after
+// every contact create/update/delete and on boot for every company.
+export function syncFlatContactCols(companyId) {
+  const contacts = listContacts(companyId);
+  const hm  = contacts.find((c) => c.role === 'hiring_manager');
+  const rec = contacts.find((c) => c.role === 'recruiter');
+  const ref = contacts.find((c) => c.role === 'referral');
+  const fullName = (c) => [c?.firstName, c?.lastName].filter(Boolean).join(' ');
+  const anyEstablished = (role) => contacts.some((c) => c.role === role && c.established);
+  return updateCompany(companyId, {
+    hmName:               fullName(hm),
+    recruiterName:        fullName(rec),
+    recruiterCompany:     rec?.notes || '',
+    referralName:         fullName(ref),
+    referralRelationship: ref?.notes || '',
+    hmEstablished:        anyEstablished('hiring_manager'),
+    recruiterEstablished: anyEstablished('recruiter'),
+  });
+}
+
+export function resyncAllFlatContactCols() {
+  const ids = db.prepare('SELECT id FROM companies').all().map((r) => r.id);
+  for (const id of ids) syncFlatContactCols(id);
+  return ids.length;
 }
 
 // ── Fitness logs ───────────────────────────────────────────────────────────────
