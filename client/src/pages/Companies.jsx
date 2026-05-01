@@ -435,7 +435,7 @@ function KanbanCard({ company, onOpen, onDelete }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
             {timeAgo(company.createdAt) && (
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: '0.68rem', background: '#FCEAEA', color: '#7F1D1D', borderRadius: '999px', padding: '0.1rem 0.45rem', whiteSpace: 'nowrap', fontWeight: 500 }}>
                 {timeAgo(company.createdAt)}
               </span>
             )}
