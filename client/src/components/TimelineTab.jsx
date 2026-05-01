@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Paperclip, Link2, X, Image as ImageIcon, Send } from 'lucide-react';
+import { Paperclip, Link2, X, Image as ImageIcon, Send, Sparkles, AlertCircle } from 'lucide-react';
 import { C } from '../theme.js';
 import * as api from '../api.js';
 
@@ -224,9 +224,11 @@ function EventRow({ event, onImageClick }) {
   const detailUrl = event.details?.url;
   const att = event.attachments || [];
   const summary = event.notes || event.details?.summary || '';
+  const isPending = event.processingStatus === 'pending';
+  const isFailed  = event.processingStatus === 'failed';
 
   return (
-    <div style={{ display: 'flex', gap: 14, padding: '14px 0', borderBottom: `1px solid ${C.borderLight}` }}>
+    <div style={{ display: 'flex', gap: 14, padding: '14px 0', borderBottom: `1px solid ${C.borderLight}`, opacity: isPending ? 0.85 : 1 }}>
       {/* timeline marker */}
       <div style={{ flexShrink: 0, paddingTop: 4 }}>
         <div style={{ width: 8, height: 8, borderRadius: 999, background: dotColor }} />
@@ -241,6 +243,18 @@ function EventRow({ event, onImageClick }) {
           {event.channel && (
             <span style={{ fontSize: 10, color: C.textDim, padding: '1px 6px', border: `1px solid ${C.border}`, borderRadius: 3, fontFamily: 'var(--font-mono)' }}>
               {CHANNEL_LABELS[event.channel] || event.channel}
+            </span>
+          )}
+          {isPending && (
+            <span title="LLM still parsing this entry" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, color: C.accent, padding: '1px 6px', background: C.accentDim, borderRadius: 3, fontFamily: 'var(--font-mono)' }}>
+              <Sparkles size={10} className="spin" />
+              parsing…
+            </span>
+          )}
+          {isFailed && (
+            <span title={event.processingError || 'Parse failed'} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, color: C.red, padding: '1px 6px', border: `1px solid ${C.red}`, borderRadius: 3, fontFamily: 'var(--font-mono)' }}>
+              <AlertCircle size={10} />
+              parse failed
             </span>
           )}
           <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'var(--font-mono)', marginLeft: 'auto' }}>
@@ -328,6 +342,16 @@ export default function TimelineTab({ companyId, onCompanyUpdated }) {
   }, [companyId]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Poll while any row is still being parsed by the backend worker. Polling
+  // stops as soon as nothing is pending. Cheap — one HTTP call every 2s and
+  // only when there's actual work in flight.
+  useEffect(() => {
+    const anyPending = events.some((e) => e.processingStatus === 'pending');
+    if (!anyPending) return;
+    const id = setInterval(refresh, 2000);
+    return () => clearInterval(id);
+  }, [events, refresh]);
 
   const handleCommit = (result) => {
     setEvents((prev) => [result.event, ...prev]);

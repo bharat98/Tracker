@@ -180,6 +180,21 @@ if (!has('recruiter_established')) {
   db.exec(`ALTER TABLE companies ADD COLUMN recruiter_established INTEGER NOT NULL DEFAULT 0`);
 }
 
+// Async LLM enrichment for timeline events. The /timeline POST returns the
+// event immediately with status='pending'; a background worker calls the
+// parser and patches the row in place. Empty status = legacy/synchronous row.
+const eventCols = db.prepare('PRAGMA table_info(events)').all();
+const hasEventCol = (name) => eventCols.some((c) => c.name === name);
+if (!hasEventCol('processing_status')) {
+  db.exec(`ALTER TABLE events ADD COLUMN processing_status TEXT NOT NULL DEFAULT ''`);
+}
+if (!hasEventCol('processing_error')) {
+  db.exec(`ALTER TABLE events ADD COLUMN processing_error TEXT NOT NULL DEFAULT ''`);
+}
+if (!hasEventCol('raw_text')) {
+  db.exec(`ALTER TABLE events ADD COLUMN raw_text TEXT NOT NULL DEFAULT ''`);
+}
+
 // One-time migration: copy flat contact columns → contacts table
 const contactsMigrated = db.prepare("SELECT value FROM tweaks WHERE key = 'contacts_migrated_v1'").get();
 if (!contactsMigrated) {
@@ -301,6 +316,9 @@ const parseEvent = (row) => ({
   channel: row.channel || '',
   details: row.details ? JSON.parse(row.details) : {},
   notes: row.notes || '',
+  processingStatus: row.processing_status || '',
+  processingError:  row.processing_error  || '',
+  rawText:          row.raw_text          || '',
   createdAt: row.created_at,
 });
 
@@ -465,8 +483,8 @@ export function createEvent(input) {
   const now = Date.now();
   const id = input.id || uid();
   db.prepare(
-    `INSERT INTO events (id, company_id, timestamp, actor, kind, channel, details, notes, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO events (id, company_id, timestamp, actor, kind, channel, details, notes, processing_status, raw_text, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.companyId,
@@ -476,9 +494,18 @@ export function createEvent(input) {
     input.channel || '',
     JSON.stringify(input.details || {}),
     input.notes || '',
+    input.processingStatus || '',
+    input.rawText || '',
     now
   );
   return getEvent(id);
+}
+
+export function listPendingEvents(limit = 5) {
+  return db
+    .prepare("SELECT * FROM events WHERE processing_status = 'pending' ORDER BY created_at ASC LIMIT ?")
+    .all(limit)
+    .map(parseEvent);
 }
 
 const EVENT_FIELD_MAP = {
@@ -488,6 +515,8 @@ const EVENT_FIELD_MAP = {
   channel: 'channel',
   details: 'details',
   notes: 'notes',
+  processingStatus: 'processing_status',
+  processingError:  'processing_error',
 };
 const EVENT_JSON_FIELDS = new Set(['details']);
 

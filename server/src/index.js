@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { routes } from './routes.js';
 import { UPLOADS_DIR } from './db.js';
+import { startWorker } from './extractor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -74,4 +75,5 @@ app.listen(PORT, () => {
   if (!process.env.OPENROUTER_API_KEY) {
     console.log('  (URL extraction disabled — no OPENROUTER_API_KEY in env)');
   }
+  startWorker();
 });

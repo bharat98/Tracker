@@ -7,7 +7,6 @@ import * as db from './db.js';
 import { uid } from './constants.js';
 import { extractJob } from './extract.js';
 import { parseNlLog, commitNlLog } from './nllog.js';
-import { parseTimelineEntry } from './timeline.js';
 import { syncCompany, uploadResumeFile, isConfigured as githubConfigured } from './github.js';
 import { fetchLinkedInProfile } from './linkedin.js';
 
@@ -137,7 +136,8 @@ routes.get('/companies/:id/timeline', (req, res) => {
 });
 
 // POST /companies/:id/timeline — multipart entry: text + optional URL + optional image.
-// LLM parses → event row + optional contact upsert + optional stage change.
+// Persists the event immediately with processing_status='pending' and returns;
+// a background worker (see extractor.js) runs the LLM and patches the row.
 routes.post('/companies/:id/timeline', (req, res, next) => {
   attachmentUpload.single('image')(req, res, (err) => {
     if (err) return res.status(err.status || 400).json({ error: err.message || 'Upload failed.' });
@@ -155,30 +155,21 @@ routes.post('/companies/:id/timeline', (req, res, next) => {
       return res.status(400).json({ error: 'Provide at least text, a URL, or an image.' });
     }
 
-    // Parse with LLM (text required as the steering signal). If only image+URL,
-    // synthesise a minimal text from the URL so the model has something to work on.
-    const promptText = text || (url ? `Logged a URL: ${url}` : 'Attached a screenshot.');
-    const parsed = await parseTimelineEntry({
-      text: promptText,
-      url,
-      hasImage: !!file,
-      company,
-    });
-
-    // Build event details from parsed + raw URL.
+    // Build initial event details (URL only — summary will be filled in by the worker).
     const details = {};
     if (url) details.url = url;
-    if (parsed.event.summary && parsed.event.summary !== text) details.summary = parsed.event.summary;
 
-    // Persist event.
+    // Persist event with placeholder kind. Worker will rewrite kind/actor/channel/summary.
     const event = db.createEvent({
-      companyId: req.params.id,
-      kind:      parsed.event.kind,
-      actor:     parsed.event.actor,
-      channel:   parsed.event.channel,
+      companyId:        req.params.id,
+      kind:             'note',
+      actor:            'me',
+      channel:          '',
       details,
-      notes:     text || parsed.event.summary,
-      timestamp: Date.now(),
+      notes:            text,
+      rawText:          text,
+      processingStatus: 'pending',
+      timestamp:        Date.now(),
     });
 
     // Persist attachment if uploaded.
@@ -201,51 +192,24 @@ routes.post('/companies/:id/timeline', (req, res, next) => {
       });
     }
 
-    // Upsert contact if extracted.
-    let contact = null;
-    if (parsed.contact) {
-      const c = parsed.contact;
-      const result = db.upsertContact({
-        companyId:   req.params.id,
-        firstName:   c.first_name,
-        lastName:    c.last_name,
-        title:       c.title,
-        role:        c.role_type,
-        linkedinUrl: c.linkedin_url,
-        email:       c.email,
-        sourceUrl:   c.source_url || url,
-      });
-      contact = { ...result.contact, _created: result.created };
-
-      // Auto-flip "established" when an inbound response from an HM or recruiter
-      // arrives — saves the user from having to tick the box manually.
-      const isInboundResponse =
-        parsed.event.actor === 'them' && parsed.event.kind === 'responded';
-      const isOutreachRole =
-        c.role_type === 'hm' || c.role_type === 'hiring_manager' || c.role_type === 'recruiter';
-      if (isInboundResponse && isOutreachRole && !result.contact.established) {
-        db.updateContact(result.contact.id, { established: true });
-        syncFlatContactCols(req.params.id);
-        contact.established = true;
-      }
-    }
-
-    // Apply stage change if extracted.
-    let stageChanged = null;
-    if (parsed.stage_change && parsed.stage_change !== company.currentStage) {
-      db.updateCompany(req.params.id, { currentStage: parsed.stage_change });
-      stageChanged = { from: company.currentStage, to: parsed.stage_change };
-    }
+    // Wake the worker so single-event entries don't sit for the full poll interval.
+    process.nextTick(() => {
+      import('./extractor.js').then((m) => m.kickWorker?.()).catch(() => {});
+    });
 
     res.json({
       event: { ...event, attachments: attachment ? [attachment] : [] },
-      contact,
-      stageChanged,
+      contact: null,
+      stageChanged: null,
     });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message || 'Timeline entry failed.' });
   }
 });
+
+// Export the helper so the extractor module (which runs outside the request
+// lifecycle) can re-apply the same contact + stage-change side effects.
+export { syncFlatContactCols };
 
 // Cross-company event query: GET /events?kind=&channel=&actor=&after=&before=
 routes.get('/events', (req, res) => {
