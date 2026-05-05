@@ -251,22 +251,22 @@ routes.post('/companies/:id/contacts', (req, res) => {
     { ...(req.body || {}), companyId: req.params.id },
     { override: true }
   );
-  syncFlatContactCols(req.params.id);
-  res.status(result.created ? 201 : 200).json({ contact: result.contact, created: result.created });
+  const company = syncFlatContactCols(req.params.id);
+  res.status(result.created ? 201 : 200).json({ contact: result.contact, created: result.created, company });
 });
 
 routes.put('/companies/:id/contacts/:contactId', (req, res) => {
   if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });
   const updated = db.updateContact(req.params.contactId, req.body || {});
   if (!updated) return res.status(404).json({ error: 'Contact not found.' });
-  syncFlatContactCols(req.params.id);
-  res.json(updated);
+  const company = syncFlatContactCols(req.params.id);
+  res.json({ contact: updated, company });
 });
 
 routes.delete('/companies/:id/contacts/:contactId', (req, res) => {
   db.deleteContact(req.params.contactId);
-  syncFlatContactCols(req.params.id);
-  res.status(204).end();
+  const company = syncFlatContactCols(req.params.id);
+  res.json({ company });
 });
 
 routes.get('/tweaks', (req, res) => {

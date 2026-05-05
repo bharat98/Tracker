@@ -46,7 +46,7 @@ const TABS = [
   { key: 'notes',     label: 'Notes'     },
 ];
 
-export default function CompanyDrawer({ companyId, companies, onClose, onSave, onDelete }) {
+export default function CompanyDrawer({ companyId, companies, onClose, onSave, onDelete, onCompanyPatch }) {
   const company = companyId ? companies.find((c) => c.id === companyId) : null;
 
   const [tab, setTab] = useState('timeline');
@@ -215,7 +215,7 @@ export default function CompanyDrawer({ companyId, companies, onClose, onSave, o
             />
           )}
           {tab === 'contacts' && (
-            <ContactsTab companyId={company.id} />
+            <ContactsTab companyId={company.id} onCompanyPatch={onCompanyPatch} />
           )}
           {tab === 'timeline' && (
             <TimelineTab
@@ -300,7 +300,7 @@ const SECTION_CONFIG = [
   { role: 'other',          title: 'Other',          showTitle: true },
 ];
 
-function ContactsTab({ companyId }) {
+function ContactsTab({ companyId, onCompanyPatch }) {
   const [contacts,   setContacts]   = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [addingRole, setAddingRole] = useState(null);
@@ -346,14 +346,16 @@ function ContactsTab({ companyId }) {
         }
         return [...prev, saved];
       });
+      if (result?.company) onCompanyPatch?.(result.company);
       cancelAdding();
     } catch (e) { console.error('save contact failed', e); }
   };
 
   const removeContact = async (id) => {
     try {
-      await api.deleteContact(companyId, id);
+      const result = await api.deleteContact(companyId, id);
       setContacts((prev) => prev.filter((c) => c.id !== id));
+      if (result?.company) onCompanyPatch?.(result.company);
     } catch (e) { console.error('delete contact failed', e); }
   };
 
@@ -376,8 +378,11 @@ function ContactsTab({ companyId }) {
   const saveEditing = async () => {
     if (!editingId) return;
     try {
-      const updated = await api.updateContact(companyId, editingId, editDraft);
+      const result = await api.updateContact(companyId, editingId, editDraft);
+      // Normalise: server now returns { contact, company }; older shape was the bare contact.
+      const updated = result?.contact || result;
       setContacts((prev) => prev.map((c) => (c.id === editingId ? updated : c)));
+      if (result?.company) onCompanyPatch?.(result.company);
       cancelEditing();
     } catch (e) { console.error('update contact failed', e); }
   };

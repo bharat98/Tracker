@@ -65,7 +65,7 @@ const groupByColumn = (rows) => {
   return g;
 };
 
-export default function CompaniesPage({ companies, extractionAvailable, onSave, onDelete }) {
+export default function CompaniesPage({ companies, extractionAvailable, onSave, onDelete, onCompanyPatch }) {
   const navigate = useNavigate();
   const { id: selectedId } = useParams();
 
@@ -162,6 +162,7 @@ export default function CompaniesPage({ companies, extractionAvailable, onSave, 
           onClose={() => navigate('/companies')}
           onSave={(updated) => { onSave(updated, {}); navigate('/companies'); }}
           onDelete={(id) => { onDelete(id); navigate('/companies'); }}
+          onCompanyPatch={onCompanyPatch}
         />
       )}
     </div>

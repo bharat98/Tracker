@@ -177,6 +177,7 @@ function AppRoutes({
   companies,
   saveCompany,
   deleteCompany,
+  patchCompanyLocal,
   onQuickLog,
 }) {
   if (!ready) {
@@ -215,6 +216,7 @@ function AppRoutes({
               extractionAvailable={extractionAvailable}
               onSave={(updated, extras) => saveCompany(updated, extras, false)}
               onDelete={deleteCompany}
+              onCompanyPatch={patchCompanyLocal}
             />
           }
         />
@@ -235,6 +237,7 @@ function AppRoutes({
               extractionAvailable={extractionAvailable}
               onSave={(updated, extras) => saveCompany(updated, extras, false)}
               onDelete={deleteCompany}
+              onCompanyPatch={patchCompanyLocal}
             />
           }
         />
@@ -400,6 +403,14 @@ export default function App() {
     [createCompany, replaceCompany]
   );
 
+  // Patch a single company in local state without a server round-trip.
+  // Used after contact mutations, where the server has already updated the
+  // company's flat hm_established/recruiter_established projection columns.
+  const patchCompanyLocal = useCallback((updated) => {
+    if (!updated?.id) return;
+    setCompanies((prev) => prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)));
+  }, []);
+
   const deleteCompany = useCallback((id) => {
     setCompanies((prev) => prev.filter((c) => c.id !== id));
     api.deleteCompany(id).catch(logError('deleteCompany'));
@@ -421,6 +432,7 @@ export default function App() {
         companies={companies}
         saveCompany={saveCompany}
         deleteCompany={deleteCompany}
+        patchCompanyLocal={patchCompanyLocal}
         onQuickLog={() => setQuickLogOpen(true)}
       />
       <QuickLogModal
