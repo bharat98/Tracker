@@ -195,6 +195,26 @@ if (!hasEventCol('raw_text')) {
   db.exec(`ALTER TABLE events ADD COLUMN raw_text TEXT NOT NULL DEFAULT ''`);
 }
 
+// Async PDF capture queue. /github/sync enqueues a row after the README/
+// description files are written; a Playwright worker prints the JD page to
+// PDF and uploads it to the same folder. Same FIFO + status pattern as the
+// timeline LLM enrichment queue above.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pdf_jobs (
+    id          TEXT PRIMARY KEY,
+    company_id  TEXT NOT NULL,
+    source_url  TEXT NOT NULL,
+    folder_path TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    error       TEXT NOT NULL DEFAULT '',
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_pdf_jobs_status ON pdf_jobs(status, created_at);
+`);
+
 // Normalise legacy role aliases. The LLM extractor (timeline.js) emits
 // role_type='hm', while the contact form uses 'hiring_manager' — both ended
 // up in the DB. Canonicalise to 'hiring_manager' so syncFlatContactCols and
@@ -845,6 +865,53 @@ export function resyncAllFlatContactCols() {
   const ids = db.prepare('SELECT id FROM companies').all().map((r) => r.id);
   for (const id of ids) syncFlatContactCols(id);
   return ids.length;
+}
+
+// ── PDF capture queue ─────────────────────────────────────────────────────────
+const parsePdfJob = (row) => row && {
+  id:         row.id,
+  companyId:  row.company_id,
+  sourceUrl:  row.source_url,
+  folderPath: row.folder_path,
+  status:     row.status,
+  error:      row.error,
+  attempts:   row.attempts,
+  createdAt:  row.created_at,
+  updatedAt:  row.updated_at,
+};
+
+export function enqueuePdfJob({ companyId, sourceUrl, folderPath }) {
+  const now = Date.now();
+  const id = uid();
+  db.prepare(
+    `INSERT INTO pdf_jobs (id, company_id, source_url, folder_path, status, error, attempts, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'pending', '', 0, ?, ?)`
+  ).run(id, companyId, sourceUrl, folderPath, now, now);
+  return parsePdfJob(db.prepare('SELECT * FROM pdf_jobs WHERE id = ?').get(id));
+}
+
+export function listPendingPdfJobs(limit = 2) {
+  return db
+    .prepare("SELECT * FROM pdf_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?")
+    .all(limit)
+    .map(parsePdfJob);
+}
+
+export function updatePdfJob(id, patch) {
+  const colMap = { status: 'status', error: 'error', attempts: 'attempts' };
+  const cols = [];
+  const vals = [];
+  for (const k of Object.keys(colMap)) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) {
+      cols.push(`${colMap[k]} = ?`);
+      vals.push(patch[k]);
+    }
+  }
+  if (!cols.length) return parsePdfJob(db.prepare('SELECT * FROM pdf_jobs WHERE id = ?').get(id));
+  cols.push('updated_at = ?');
+  vals.push(Date.now(), id);
+  db.prepare(`UPDATE pdf_jobs SET ${cols.join(', ')} WHERE id = ?`).run(...vals);
+  return parsePdfJob(db.prepare('SELECT * FROM pdf_jobs WHERE id = ?').get(id));
 }
 
 // ── Fitness logs ───────────────────────────────────────────────────────────────

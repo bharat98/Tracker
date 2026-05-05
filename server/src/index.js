@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { routes } from './routes.js';
 import { UPLOADS_DIR, resyncAllFlatContactCols, dedupeAllContacts } from './db.js';
 import { startWorker } from './extractor.js';
+import { startPdfWorker } from './pdfWorker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -80,4 +81,5 @@ app.listen(PORT, () => {
   const synced = resyncAllFlatContactCols();
   console.log(`[boot] resynced flat contact columns for ${synced} companies`);
   startWorker();
+  startPdfWorker();
 });

@@ -227,6 +227,50 @@ export function isConfigured() {
   return getConfig().configured;
 }
 
+// Upload (or overwrite) the JD PDF inside a company folder. Folder must
+// already exist (syncCompany's job). On overwrite, GitHub's PUT /contents
+// requires the existing blob's sha — fetch it first.
+export async function uploadJdPdf({ folderPath, buffer, message }) {
+  const cfg = getConfig();
+  if (!cfg.configured) {
+    throw Object.assign(new Error(cfg.reason), { status: 503 });
+  }
+  const targetPath = `${folderPath}/jd.pdf`;
+  const sha = await getFileSha(targetPath);
+  const { token, repo, branch } = cfg;
+  const res = await gh('PUT', `/repos/${repo}/contents/${encodeURI(targetPath)}`, {
+    token,
+    body: {
+      message: message || `Add JD PDF: ${folderPath}`,
+      content: bufToBase64(buffer),
+      branch,
+      ...(sha ? { sha } : {}),
+    },
+  });
+  if (res.ok) {
+    const json = await res.json();
+    return { url: json?.content?.html_url, path: targetPath };
+  }
+  const body = await res.text().catch(() => '');
+  throw Object.assign(
+    new Error(`GitHub ${res.status} writing "${targetPath}": ${body.slice(0, 200)}`),
+    { status: res.status === 401 ? 401 : 502 }
+  );
+}
+
+async function getFileSha(path) {
+  const { token, repo, branch } = getConfig();
+  const res = await gh(
+    'GET',
+    `/repos/${repo}/contents/${encodeURI(path)}?ref=${encodeURIComponent(branch)}`,
+    { token }
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) return null;
+  const json = await res.json().catch(() => null);
+  return json?.sha || null;
+}
+
 // Append -2, -3, ... before the file extension when the original path is taken.
 function suffixFilename(filename, n) {
   const dot = filename.lastIndexOf('.');

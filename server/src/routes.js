@@ -8,6 +8,7 @@ import { uid } from './constants.js';
 import { extractJob } from './extract.js';
 import { parseNlLog, commitNlLog } from './nllog.js';
 import { syncCompany, uploadResumeFile, isConfigured as githubConfigured } from './github.js';
+import { kickPdfWorker } from './pdfWorker.js';
 import { fetchLinkedInProfile } from './linkedin.js';
 
 // Resume upload: PDF / DOC / DOCX only, 10 MB cap, kept in memory so we can
@@ -315,6 +316,21 @@ routes.post('/github/sync', syncLimiter, async (req, res) => {
       sourceText,
       force: Boolean(force),
     });
+    // Kick off the JD-page-to-PDF capture in the background. We have the
+    // exact folder path syncCompany picked (incl. -2/-3 suffix), so the
+    // worker can upload jd.pdf into it without re-deriving the name.
+    if (result?.status === 'created' && result.folderPath && sourceUrl) {
+      try {
+        db.enqueuePdfJob({
+          companyId,
+          sourceUrl,
+          folderPath: result.folderPath,
+        });
+        kickPdfWorker();
+      } catch (qErr) {
+        console.error('[github/sync] could not enqueue PDF job:', qErr.message);
+      }
+    }
     res.json(result);
   } catch (err) {
     const status = err.status || 500;
