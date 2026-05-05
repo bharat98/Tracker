@@ -332,8 +332,20 @@ function ContactsTab({ companyId }) {
     const empty = !draft.firstName && !draft.lastName && !draft.linkedinUrl && !draft.email && !draft.title;
     if (empty) { cancelAdding(); return; }
     try {
-      const created = await api.createContact(companyId, { ...draft, role: addingRole });
-      setContacts((prev) => [...prev, created]);
+      const result = await api.createContact(companyId, { ...draft, role: addingRole });
+      // Server may return either a wrapped { contact, created } or the bare
+      // contact (older clients). Normalise.
+      const saved = result?.contact || result;
+      // The upsert may have merged into an existing row — dedupe by ID.
+      setContacts((prev) => {
+        const idx = prev.findIndex((c) => c.id === saved.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = saved;
+          return next;
+        }
+        return [...prev, saved];
+      });
       cancelAdding();
     } catch (e) { console.error('save contact failed', e); }
   };

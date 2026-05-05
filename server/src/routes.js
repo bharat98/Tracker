@@ -244,9 +244,15 @@ routes.get('/companies/:id/contacts', (req, res) => {
 
 routes.post('/companies/:id/contacts', (req, res) => {
   if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });
-  const contact = db.createContact({ ...(req.body || {}), companyId: req.params.id });
+  // Manual-form path: route through upsert so re-adding a person who already
+  // exists (e.g. previously LLM-extracted) updates that row instead of
+  // creating a duplicate. override=true so user input wins on conflicts.
+  const result = db.upsertContact(
+    { ...(req.body || {}), companyId: req.params.id },
+    { override: true }
+  );
   syncFlatContactCols(req.params.id);
-  res.status(201).json(contact);
+  res.status(result.created ? 201 : 200).json({ contact: result.contact, created: result.created });
 });
 
 routes.put('/companies/:id/contacts/:contactId', (req, res) => {

@@ -614,44 +614,169 @@ export function createContact(input) {
   return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
 }
 
-// Upsert by (company_id + first/last name OR linkedin_url OR email).
-// Returns { contact, created: boolean }.
-export function upsertContact(input) {
-  const all = db.prepare('SELECT * FROM contacts WHERE company_id = ?').all(input.companyId).map(parseContact);
-  const norm = (s) => (s || '').trim().toLowerCase();
-
-  const match = all.find((c) => {
-    if (input.linkedinUrl && norm(c.linkedinUrl) === norm(input.linkedinUrl)) return true;
-    if (input.email && norm(c.email) === norm(input.email)) return true;
-    if (input.firstName && input.lastName &&
-        norm(c.firstName) === norm(input.firstName) &&
-        norm(c.lastName)  === norm(input.lastName)) return true;
-    return false;
-  });
-
-  if (match) {
-    // Patch only fields that arrive non-empty so we don't clobber existing data.
-    const patch = {};
-    const keep = (k, v) => { if (v && !match[k]) patch[k] = v; };
-    keep('title',       input.title);
-    keep('linkedinUrl', input.linkedinUrl);
-    keep('email',       input.email);
-    keep('sourceUrl',   input.sourceUrl);
-    keep('role',        input.role && input.role !== 'other' ? canonicalContactRole(input.role) : '');
-    if (Object.keys(patch).length) {
-      const cols = [];
-      const vals = [];
-      const colMap = { title: 'title', linkedinUrl: 'linkedin_url', email: 'email', sourceUrl: 'source_url', role: 'role' };
-      for (const k of Object.keys(patch)) {
-        cols.push(`${colMap[k]} = ?`);
-        vals.push(patch[k]);
-      }
-      vals.push(match.id);
-      db.prepare(`UPDATE contacts SET ${cols.join(', ')} WHERE id = ?`).run(...vals);
+// Normalise a LinkedIn profile URL down to "linkedin.com/in/<slug>" so two
+// URLs that differ only by trailing path / query / scheme / www compare equal.
+// Falls back to lowercased trimmed input for non-LinkedIn URLs.
+export function normalizeLinkedinUrl(raw) {
+  if (!raw) return '';
+  const cleaned = String(raw).trim();
+  if (!cleaned) return '';
+  try {
+    const u = new URL(cleaned.startsWith('http') ? cleaned : `https://${cleaned}`);
+    const host = u.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host.endsWith('linkedin.com')) {
+      const m = u.pathname.match(/^\/in\/([^/]+)/i);
+      if (m) return `linkedin.com/in/${m[1].toLowerCase()}`;
     }
-    return { contact: parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(match.id)), created: false };
+    return `${host}${u.pathname.replace(/\/+$/, '')}`.toLowerCase();
+  } catch {
+    return cleaned.toLowerCase();
   }
-  return { contact: createContact(input), created: true };
+}
+
+// True iff the two strings differ by at most one insertion / deletion /
+// substitution. Used for fuzzy last-name matching to catch typos like
+// "Hubbard" vs "Thubbard". O(min(|a|, |b|)).
+function withinOneEdit(a, b) {
+  if (a === b) return true;
+  const lenDiff = Math.abs(a.length - b.length);
+  if (lenDiff > 1) return false;
+  const [s, t] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0, j = 0, edits = 0;
+  while (i < s.length && j < t.length) {
+    if (s[i] !== t[j]) {
+      if (++edits > 1) return false;
+      if (s.length === t.length) { i++; j++; } else { j++; }
+    } else { i++; j++; }
+  }
+  return edits + (t.length - j) <= 1;
+}
+
+// Returns true if two contacts almost certainly describe the same person.
+// Tries: identical normalised LinkedIn slug, identical email, then a
+// last-name-fuzzy + first-name-or-initial match.
+function sameContactPerson(a, b) {
+  const aSlug = normalizeLinkedinUrl(a.linkedinUrl);
+  const bSlug = normalizeLinkedinUrl(b.linkedinUrl);
+  if (aSlug && bSlug && aSlug === bSlug) return true;
+
+  const norm = (s) => (s || '').trim().toLowerCase();
+  if (a.email && b.email && norm(a.email) === norm(b.email)) return true;
+
+  const aFirst = norm(a.firstName), bFirst = norm(b.firstName);
+  const aLast  = norm(a.lastName),  bLast  = norm(b.lastName);
+  if (!aLast || !bLast) return false;
+  if (!withinOneEdit(aLast, bLast)) return false;
+  if (aFirst && bFirst) {
+    return aFirst === bFirst || aFirst[0] === bFirst[0];
+  }
+  return false;
+}
+
+// Upsert by (company_id + same-person match). Pass `override: true` from the
+// manual contact form so user input wins over an existing LLM-extracted row;
+// LLM/extractor callers leave it false so the user's manual edits aren't
+// clobbered by automated re-extraction.
+// Returns { contact, created: boolean }.
+export function upsertContact(input, { override = false } = {}) {
+  const all = db.prepare('SELECT * FROM contacts WHERE company_id = ?').all(input.companyId).map(parseContact);
+  const probe = {
+    linkedinUrl: input.linkedinUrl || '',
+    email:       input.email       || '',
+    firstName:   input.firstName   || '',
+    lastName:    input.lastName    || '',
+  };
+  const match = all.find((c) => sameContactPerson(c, probe));
+
+  if (!match) return { contact: createContact(input), created: true };
+
+  if (override) {
+    // Manual form: user is the source of truth, replace every field they
+    // provided (including empties — clearing a field is intentional).
+    const patch = {};
+    const passThrough = ['title', 'firstName', 'lastName', 'linkedinUrl', 'email', 'notes'];
+    for (const k of passThrough) {
+      if (Object.prototype.hasOwnProperty.call(input, k)) patch[k] = input[k] ?? '';
+    }
+    if (input.role) patch.role = canonicalContactRole(input.role);
+    if (Object.prototype.hasOwnProperty.call(input, 'established')) patch.established = !!input.established;
+    const updated = updateContact(match.id, patch);
+    return { contact: updated, created: false };
+  }
+
+  // LLM/extractor path: only fill fields that are currently empty so we
+  // don't clobber data the user has already curated.
+  const patch = {};
+  const fillIfEmpty = (k, v) => { if (v && !match[k]) patch[k] = v; };
+  fillIfEmpty('title',       input.title);
+  fillIfEmpty('linkedinUrl', input.linkedinUrl);
+  fillIfEmpty('email',       input.email);
+  fillIfEmpty('sourceUrl',   input.sourceUrl);
+  fillIfEmpty('role',        input.role && input.role !== 'other' ? canonicalContactRole(input.role) : '');
+  if (!Object.keys(patch).length) return { contact: match, created: false };
+  const updated = updateContact(match.id, patch);
+  // updateContact doesn't know about sourceUrl — handle it directly.
+  if (patch.sourceUrl) {
+    db.prepare('UPDATE contacts SET source_url = ? WHERE id = ?').run(patch.sourceUrl, match.id);
+  }
+  return { contact: parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(match.id)), created: false };
+}
+
+// Collapse same-person duplicate rows (per company) into one. Picks the
+// "best" survivor by a heuristic: most non-empty fields, ties broken by
+// the most recent created_at — which works well in practice because
+// manually-curated rows have more populated fields than LLM stubs.
+export function dedupeContactsForCompany(companyId) {
+  const contacts = listContacts(companyId);
+  const score = (c) => {
+    let s = 0;
+    for (const k of ['title', 'firstName', 'lastName', 'linkedinUrl', 'email', 'notes']) {
+      if (c[k] && String(c[k]).trim()) s++;
+    }
+    if (c.role && c.role !== 'other') s++;
+    if (c.established) s++;
+    return s;
+  };
+
+  const groups = []; // [[contact, ...], ...]
+  for (const c of contacts) {
+    const g = groups.find((grp) => grp.some((x) => sameContactPerson(x, c)));
+    if (g) g.push(c);
+    else groups.push([c]);
+  }
+
+  let removed = 0;
+  for (const g of groups) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => {
+      const ds = score(b) - score(a);
+      if (ds !== 0) return ds;
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+    const [keeper, ...losers] = g;
+    // Salvage any field the keeper is missing but a loser has.
+    const salvage = {};
+    for (const k of ['title', 'linkedinUrl', 'email', 'notes']) {
+      if (!keeper[k]) {
+        const donor = losers.find((l) => l[k]);
+        if (donor) salvage[k] = donor[k];
+      }
+    }
+    if (losers.some((l) => l.established) && !keeper.established) salvage.established = true;
+    if (Object.keys(salvage).length) updateContact(keeper.id, salvage);
+    for (const l of losers) {
+      db.prepare('DELETE FROM contacts WHERE id = ?').run(l.id);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+export function dedupeAllContacts() {
+  const ids = db.prepare('SELECT id FROM companies').all().map((r) => r.id);
+  let total = 0;
+  for (const id of ids) total += dedupeContactsForCompany(id);
+  return total;
 }
 
 export function updateContact(id, input) {
