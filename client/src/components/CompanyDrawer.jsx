@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Trash2, Download, Loader } from 'lucide-react';
+import { X, Trash2, Download, Loader, Pencil } from 'lucide-react';
 import EventLog from './EventLog.jsx';
 import TimelineTab from './TimelineTab.jsx';
 import NextStepsTree from './NextStepsTree.jsx';
@@ -305,6 +305,8 @@ function ContactsTab({ companyId }) {
   const [loading,    setLoading]    = useState(true);
   const [addingRole, setAddingRole] = useState(null);
   const [draft,      setDraft]      = useState({});
+  const [editingId,  setEditingId]  = useState(null);
+  const [editDraft,  setEditDraft]  = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -330,8 +332,20 @@ function ContactsTab({ companyId }) {
     const empty = !draft.firstName && !draft.lastName && !draft.linkedinUrl && !draft.email && !draft.title;
     if (empty) { cancelAdding(); return; }
     try {
-      const created = await api.createContact(companyId, { ...draft, role: addingRole });
-      setContacts((prev) => [...prev, created]);
+      const result = await api.createContact(companyId, { ...draft, role: addingRole });
+      // Server may return either a wrapped { contact, created } or the bare
+      // contact (older clients). Normalise.
+      const saved = result?.contact || result;
+      // The upsert may have merged into an existing row — dedupe by ID.
+      setContacts((prev) => {
+        const idx = prev.findIndex((c) => c.id === saved.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = saved;
+          return next;
+        }
+        return [...prev, saved];
+      });
       cancelAdding();
     } catch (e) { console.error('save contact failed', e); }
   };
@@ -341,6 +355,31 @@ function ContactsTab({ companyId }) {
       await api.deleteContact(companyId, id);
       setContacts((prev) => prev.filter((c) => c.id !== id));
     } catch (e) { console.error('delete contact failed', e); }
+  };
+
+  const startEditing = (contact) => {
+    setAddingRole(null);
+    setEditingId(contact.id);
+    setEditDraft({
+      title:       contact.title       || '',
+      firstName:   contact.firstName   || '',
+      lastName:    contact.lastName    || '',
+      linkedinUrl: contact.linkedinUrl || '',
+      email:       contact.email       || '',
+      notes:       contact.notes       || '',
+      established: !!contact.established,
+    });
+  };
+
+  const cancelEditing = () => { setEditingId(null); setEditDraft({}); };
+
+  const saveEditing = async () => {
+    if (!editingId) return;
+    try {
+      const updated = await api.updateContact(companyId, editingId, editDraft);
+      setContacts((prev) => prev.map((c) => (c.id === editingId ? updated : c)));
+      cancelEditing();
+    } catch (e) { console.error('update contact failed', e); }
   };
 
   if (loading) {
@@ -373,13 +412,22 @@ function ContactsTab({ companyId }) {
           onSave={saveContact}
           onCancel={cancelAdding}
           onDelete={removeContact}
+          editingId={editingId}
+          editDraft={editDraft}
+          onStartEdit={startEditing}
+          onEditDraftChange={(patch) => setEditDraft((prev) => ({ ...prev, ...patch }))}
+          onSaveEdit={saveEditing}
+          onCancelEdit={cancelEditing}
         />
       ))}
     </div>
   );
 }
 
-function ContactSection({ sec, contacts, isAdding, draft, onStartAdd, onDraftChange, onSave, onCancel, onDelete }) {
+function ContactSection({
+  sec, contacts, isAdding, draft, onStartAdd, onDraftChange, onSave, onCancel, onDelete,
+  editingId, editDraft, onStartEdit, onEditDraftChange, onSaveEdit, onCancelEdit,
+}) {
   const hasContent = contacts.length > 0 || isAdding;
   return (
     <div className="card" style={{ padding: '1rem 1.1rem', marginBottom: '0.75rem' }}>
@@ -395,7 +443,20 @@ function ContactSection({ sec, contacts, isAdding, draft, onStartAdd, onDraftCha
         )}
       </div>
 
-      {contacts.map((c) => <ContactRow key={c.id} contact={c} sec={sec} onDelete={onDelete} />)}
+      {contacts.map((c) => (
+        editingId === c.id ? (
+          <ContactEditForm
+            key={c.id}
+            sec={sec}
+            draft={editDraft}
+            onDraftChange={onEditDraftChange}
+            onSave={onSaveEdit}
+            onCancel={onCancelEdit}
+          />
+        ) : (
+          <ContactRow key={c.id} contact={c} sec={sec} onDelete={onDelete} onEdit={onStartEdit} />
+        )
+      ))}
 
       {isAdding && (
         <ContactAddForm sec={sec} draft={draft} onDraftChange={onDraftChange} onCancel={onCancel} onSave={onSave} hasExisting={contacts.length > 0} />
@@ -473,6 +534,9 @@ function ContactAddForm({ sec, draft, onDraftChange, onCancel, onSave, hasExisti
           {fetchMsg}
         </div>
       )}
+      {(sec.role === 'hiring_manager' || sec.role === 'recruiter') && (
+        <EstablishedToggle draft={draft} onDraftChange={onDraftChange} />
+      )}
       <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
         <button className="btn btn-ghost"    onClick={onCancel} style={{ fontSize: '0.82rem' }}>Cancel</button>
         <button className="btn btn-primary"  onClick={onSave}   style={{ fontSize: '0.82rem' }}>Save</button>
@@ -481,7 +545,21 @@ function ContactAddForm({ sec, draft, onDraftChange, onCancel, onSave, hasExisti
   );
 }
 
-function ContactRow({ contact, sec, onDelete }) {
+function EstablishedToggle({ draft, onDraftChange }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.6rem', cursor: 'pointer', userSelect: 'none' }}>
+      <input
+        type="checkbox"
+        checked={!!draft.established}
+        onChange={(e) => onDraftChange({ established: e.target.checked })}
+        style={{ cursor: 'pointer' }}
+      />
+      Contact established (they've replied)
+    </label>
+  );
+}
+
+function ContactRow({ contact, sec, onDelete, onEdit }) {
   const displayName = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || '(no name)';
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '0.5rem 0', borderBottom: '1px solid var(--divider)' }}>
@@ -489,7 +567,12 @@ function ContactRow({ contact, sec, onDelete }) {
         {sec.showTitle && contact.title && (
           <div className="label" style={{ marginBottom: '0.15rem' }}>{contact.title}</div>
         )}
-        <div style={{ fontWeight: 500, fontSize: '0.9rem' }}>{displayName}</div>
+        <div style={{ fontWeight: 500, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          {displayName}
+          {contact.established && (
+            <span title="Contact established" style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0 }} />
+          )}
+        </div>
         {contact.linkedinUrl && (
           <a href={contact.linkedinUrl} target="_blank" rel="noreferrer"
             style={{ fontSize: '0.8rem', color: 'var(--accent)', display: 'block' }}>
@@ -505,12 +588,72 @@ function ContactRow({ contact, sec, onDelete }) {
           </div>
         )}
       </div>
-      <button
-        onClick={() => onDelete(contact.id)}
-        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.2rem', flexShrink: 0 }}
-      >
-        <X size={13} />
-      </button>
+      <div style={{ display: 'flex', gap: '0.15rem', flexShrink: 0 }}>
+        <button
+          onClick={() => onEdit(contact)}
+          title="Edit"
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.2rem' }}
+        >
+          <Pencil size={13} />
+        </button>
+        <button
+          onClick={() => onDelete(contact.id)}
+          title="Delete"
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.2rem' }}
+        >
+          <X size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ContactEditForm({ sec, draft, onDraftChange, onCancel, onSave }) {
+  return (
+    <div style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--divider)' }}>
+      {sec.showTitle && (
+        <input
+          className="input"
+          placeholder={sec.role === 'other' ? 'Title / role' : 'Title / designation'}
+          value={draft.title || ''}
+          onChange={(e) => onDraftChange({ title: e.target.value })}
+          style={{ marginBottom: '0.5rem' }}
+        />
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <input className="input" placeholder="First name" value={draft.firstName || ''} onChange={(e) => onDraftChange({ firstName: e.target.value })} />
+        <input className="input" placeholder="Last name"  value={draft.lastName  || ''} onChange={(e) => onDraftChange({ lastName:  e.target.value })} />
+      </div>
+      <input
+        className="input"
+        placeholder="LinkedIn URL"
+        value={draft.linkedinUrl || ''}
+        onChange={(e) => onDraftChange({ linkedinUrl: e.target.value })}
+        style={{ marginBottom: '0.5rem' }}
+      />
+      <input
+        className="input"
+        placeholder="Email (optional)"
+        value={draft.email || ''}
+        onChange={(e) => onDraftChange({ email: e.target.value })}
+        style={{ marginBottom: sec.notesLabel ? '0.5rem' : '0.25rem' }}
+      />
+      {sec.notesLabel && (
+        <input
+          className="input"
+          placeholder={sec.notesLabel}
+          value={draft.notes || ''}
+          onChange={(e) => onDraftChange({ notes: e.target.value })}
+          style={{ marginBottom: '0.25rem' }}
+        />
+      )}
+      {(sec.role === 'hiring_manager' || sec.role === 'recruiter') && (
+        <EstablishedToggle draft={draft} onDraftChange={onDraftChange} />
+      )}
+      <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+        <button className="btn btn-ghost"   onClick={onCancel} style={{ fontSize: '0.82rem' }}>Cancel</button>
+        <button className="btn btn-primary" onClick={onSave}   style={{ fontSize: '0.82rem' }}>Save</button>
+      </div>
     </div>
   );
 }

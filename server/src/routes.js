@@ -7,7 +7,6 @@ import * as db from './db.js';
 import { uid } from './constants.js';
 import { extractJob } from './extract.js';
 import { parseNlLog, commitNlLog } from './nllog.js';
-import { parseTimelineEntry } from './timeline.js';
 import { syncCompany, uploadResumeFile, isConfigured as githubConfigured } from './github.js';
 import { fetchLinkedInProfile } from './linkedin.js';
 
@@ -137,7 +136,8 @@ routes.get('/companies/:id/timeline', (req, res) => {
 });
 
 // POST /companies/:id/timeline — multipart entry: text + optional URL + optional image.
-// LLM parses → event row + optional contact upsert + optional stage change.
+// Persists the event immediately with processing_status='pending' and returns;
+// a background worker (see extractor.js) runs the LLM and patches the row.
 routes.post('/companies/:id/timeline', (req, res, next) => {
   attachmentUpload.single('image')(req, res, (err) => {
     if (err) return res.status(err.status || 400).json({ error: err.message || 'Upload failed.' });
@@ -155,30 +155,21 @@ routes.post('/companies/:id/timeline', (req, res, next) => {
       return res.status(400).json({ error: 'Provide at least text, a URL, or an image.' });
     }
 
-    // Parse with LLM (text required as the steering signal). If only image+URL,
-    // synthesise a minimal text from the URL so the model has something to work on.
-    const promptText = text || (url ? `Logged a URL: ${url}` : 'Attached a screenshot.');
-    const parsed = await parseTimelineEntry({
-      text: promptText,
-      url,
-      hasImage: !!file,
-      company,
-    });
-
-    // Build event details from parsed + raw URL.
+    // Build initial event details (URL only — summary will be filled in by the worker).
     const details = {};
     if (url) details.url = url;
-    if (parsed.event.summary && parsed.event.summary !== text) details.summary = parsed.event.summary;
 
-    // Persist event.
+    // Persist event with placeholder kind. Worker will rewrite kind/actor/channel/summary.
     const event = db.createEvent({
-      companyId: req.params.id,
-      kind:      parsed.event.kind,
-      actor:     parsed.event.actor,
-      channel:   parsed.event.channel,
+      companyId:        req.params.id,
+      kind:             'note',
+      actor:            'me',
+      channel:          '',
       details,
-      notes:     text || parsed.event.summary,
-      timestamp: Date.now(),
+      notes:            text,
+      rawText:          text,
+      processingStatus: 'pending',
+      timestamp:        Date.now(),
     });
 
     // Persist attachment if uploaded.
@@ -201,39 +192,21 @@ routes.post('/companies/:id/timeline', (req, res, next) => {
       });
     }
 
-    // Upsert contact if extracted.
-    let contact = null;
-    if (parsed.contact) {
-      const c = parsed.contact;
-      const result = db.upsertContact({
-        companyId:   req.params.id,
-        firstName:   c.first_name,
-        lastName:    c.last_name,
-        title:       c.title,
-        role:        c.role_type,
-        linkedinUrl: c.linkedin_url,
-        email:       c.email,
-        sourceUrl:   c.source_url || url,
-      });
-      contact = { ...result.contact, _created: result.created };
-    }
-
-    // Apply stage change if extracted.
-    let stageChanged = null;
-    if (parsed.stage_change && parsed.stage_change !== company.currentStage) {
-      db.updateCompany(req.params.id, { currentStage: parsed.stage_change });
-      stageChanged = { from: company.currentStage, to: parsed.stage_change };
-    }
+    // Wake the worker so single-event entries don't sit for the full poll interval.
+    process.nextTick(() => {
+      import('./extractor.js').then((m) => m.kickWorker?.()).catch(() => {});
+    });
 
     res.json({
       event: { ...event, attachments: attachment ? [attachment] : [] },
-      contact,
-      stageChanged,
+      contact: null,
+      stageChanged: null,
     });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message || 'Timeline entry failed.' });
   }
 });
+
 
 // Cross-company event query: GET /events?kind=&channel=&actor=&after=&before=
 routes.get('/events', (req, res) => {
@@ -260,22 +233,9 @@ routes.delete('/events/:id', (req, res) => {
 });
 
 // ── Contacts ─────────────────────────────────────────────────────────────────
-// Helper: after any contact write/delete, keep the legacy flat columns in sync
-// so kanban card pills (which read from the company row) stay accurate.
-function syncFlatContactCols(companyId) {
-  const contacts = db.listContacts(companyId);
-  const hm  = contacts.find((c) => c.role === 'hiring_manager');
-  const rec = contacts.find((c) => c.role === 'recruiter');
-  const ref = contacts.find((c) => c.role === 'referral');
-  const name = (c) => [c?.firstName, c?.lastName].filter(Boolean).join(' ');
-  db.updateCompany(companyId, {
-    hmName:               name(hm),
-    recruiterName:        name(rec),
-    recruiterCompany:     rec?.notes || '',
-    referralName:         name(ref),
-    referralRelationship: ref?.notes || '',
-  });
-}
+// Sync helper lives in db.js (so the background extractor can call it without
+// importing routes). Re-export the same name for the existing callers below.
+const syncFlatContactCols = db.syncFlatContactCols;
 
 routes.get('/companies/:id/contacts', (req, res) => {
   if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });
@@ -284,9 +244,23 @@ routes.get('/companies/:id/contacts', (req, res) => {
 
 routes.post('/companies/:id/contacts', (req, res) => {
   if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });
-  const contact = db.createContact({ ...(req.body || {}), companyId: req.params.id });
+  // Manual-form path: route through upsert so re-adding a person who already
+  // exists (e.g. previously LLM-extracted) updates that row instead of
+  // creating a duplicate. override=true so user input wins on conflicts.
+  const result = db.upsertContact(
+    { ...(req.body || {}), companyId: req.params.id },
+    { override: true }
+  );
   syncFlatContactCols(req.params.id);
-  res.status(201).json(contact);
+  res.status(result.created ? 201 : 200).json({ contact: result.contact, created: result.created });
+});
+
+routes.put('/companies/:id/contacts/:contactId', (req, res) => {
+  if (!db.getCompany(req.params.id)) return res.status(404).json({ error: 'Company not found.' });
+  const updated = db.updateContact(req.params.contactId, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'Contact not found.' });
+  syncFlatContactCols(req.params.id);
+  res.json(updated);
 });
 
 routes.delete('/companies/:id/contacts/:contactId', (req, res) => {

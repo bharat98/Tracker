@@ -20,6 +20,23 @@ import * as api from '../api.js';
 
 const PRE_APPLIED_COLS = new Set(['sourced', 'networked']);
 
+function timeAgo(ms) {
+  if (!ms) return null;
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  return `${days}d ago`;
+}
+
+function EstablishedDot() {
+  return (
+    <span
+      title="Contact established"
+      style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0 }}
+    />
+  );
+}
+
 const STAGE_COLUMNS = [
   { key: 'sourced',      label: 'Sourced' },
   { key: 'networked',    label: 'Networked' },
@@ -425,19 +442,26 @@ function KanbanCard({ company, onOpen, onDelete }) {
           <div style={{ fontWeight: 500, fontSize: '0.95rem', lineHeight: 1.2, color: 'var(--text)' }}>
             {company.name || 'Untitled'}
           </div>
-          {hovering && onDelete && !isDragging && (
-            <button
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.confirm(`Delete ${company.name || 'this company'}?`)) onDelete(company.id);
-              }}
-              title="Delete"
-              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 12, padding: 0, lineHeight: 1 }}
-            >
-              ✕
-            </button>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+            {timeAgo(company.createdAt) && (
+              <span style={{ fontSize: '0.68rem', background: '#FCEAEA', color: '#7F1D1D', borderRadius: '999px', padding: '0.1rem 0.45rem', whiteSpace: 'nowrap', fontWeight: 500 }}>
+                {timeAgo(company.createdAt)}
+              </span>
+            )}
+            {hovering && onDelete && !isDragging && (
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm(`Delete ${company.name || 'this company'}?`)) onDelete(company.id);
+                }}
+                title="Delete"
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 12, padding: 0, lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
         </div>
         {company.role && (
           <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
@@ -446,8 +470,18 @@ function KanbanCard({ company, onOpen, onDelete }) {
         )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.55rem' }}>
           <span className={`pill pill-${p}`}>{p}</span>
-          {company.hmName && <span className="pill pill-hm">HM</span>}
-          {company.recruiterName && <span className="pill pill-recruiter">Rec</span>}
+          {company.hmName && (
+            <span className="pill pill-hm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+              HM
+              {company.hmEstablished && <EstablishedDot />}
+            </span>
+          )}
+          {company.recruiterName && (
+            <span className="pill pill-recruiter" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+              Rec
+              {company.recruiterEstablished && <EstablishedDot />}
+            </span>
+          )}
           {company.referralName && <span className="pill pill-referral">Ref</span>}
         </div>
       </div>

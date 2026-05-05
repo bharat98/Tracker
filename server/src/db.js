@@ -161,9 +161,47 @@ if (!fitnessCols.some((c) => c.name === 'user')) {
 // source_url on contacts: where the user found this person (a LinkedIn post URL,
 // a tweet, an article — the evidence behind "this person is the recruiter").
 const contactCols = db.prepare('PRAGMA table_info(contacts)').all();
-if (!contactCols.some((c) => c.name === 'source_url')) {
+const hasContactCol = (name) => contactCols.some((c) => c.name === name);
+if (!hasContactCol('source_url')) {
   db.exec(`ALTER TABLE contacts ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`);
 }
+// `established` flips true once a contact has actually responded. Drives the
+// green dot on the HM/REC pill on the kanban card.
+if (!hasContactCol('established')) {
+  db.exec(`ALTER TABLE contacts ADD COLUMN established INTEGER NOT NULL DEFAULT 0`);
+}
+
+// Project per-role "any contact established" flags onto companies so the kanban
+// card can render the green dot from a single row read.
+if (!has('hm_established')) {
+  db.exec(`ALTER TABLE companies ADD COLUMN hm_established INTEGER NOT NULL DEFAULT 0`);
+}
+if (!has('recruiter_established')) {
+  db.exec(`ALTER TABLE companies ADD COLUMN recruiter_established INTEGER NOT NULL DEFAULT 0`);
+}
+
+// Async LLM enrichment for timeline events. The /timeline POST returns the
+// event immediately with status='pending'; a background worker calls the
+// parser and patches the row in place. Empty status = legacy/synchronous row.
+const eventCols = db.prepare('PRAGMA table_info(events)').all();
+const hasEventCol = (name) => eventCols.some((c) => c.name === name);
+if (!hasEventCol('processing_status')) {
+  db.exec(`ALTER TABLE events ADD COLUMN processing_status TEXT NOT NULL DEFAULT ''`);
+}
+if (!hasEventCol('processing_error')) {
+  db.exec(`ALTER TABLE events ADD COLUMN processing_error TEXT NOT NULL DEFAULT ''`);
+}
+if (!hasEventCol('raw_text')) {
+  db.exec(`ALTER TABLE events ADD COLUMN raw_text TEXT NOT NULL DEFAULT ''`);
+}
+
+// Normalise legacy role aliases. The LLM extractor (timeline.js) emits
+// role_type='hm', while the contact form uses 'hiring_manager' — both ended
+// up in the DB. Canonicalise to 'hiring_manager' so syncFlatContactCols and
+// the kanban card pills don't have to know about both spellings.
+db.exec(`UPDATE contacts SET role = 'hiring_manager' WHERE role = 'hm'`);
+db.exec(`UPDATE contacts SET role = 'recruiter'      WHERE role = 'rec'`);
+db.exec(`UPDATE contacts SET role = 'referral'       WHERE role = 'ref'`);
 
 // One-time migration: copy flat contact columns → contacts table
 const contactsMigrated = db.prepare("SELECT value FROM tweaks WHERE key = 'contacts_migrated_v1'").get();
@@ -272,6 +310,9 @@ const parseCompany = (row) => ({
   recruiterCompany: row.recruiter_company || '',
   currentStage: row.current_stage || 'sourced',
   resumeLink: row.resume_link || '',
+  hmEstablished: !!row.hm_established,
+  recruiterEstablished: !!row.recruiter_established,
+  createdAt: row.created_at,
 });
 
 const parseEvent = (row) => ({
@@ -283,6 +324,9 @@ const parseEvent = (row) => ({
   channel: row.channel || '',
   details: row.details ? JSON.parse(row.details) : {},
   notes: row.notes || '',
+  processingStatus: row.processing_status || '',
+  processingError:  row.processing_error  || '',
+  rawText:          row.raw_text          || '',
   createdAt: row.created_at,
 });
 
@@ -355,13 +399,15 @@ const FIELD_MAP = {
   referralRelationship: 'referral_relationship',
   hmName: 'hm_name',
   hmContactedDirectly: 'hm_contacted_directly',
+  hmEstablished: 'hm_established',
   recruiterName: 'recruiter_name',
   recruiterCompany: 'recruiter_company',
+  recruiterEstablished: 'recruiter_established',
   currentStage: 'current_stage',
   resumeLink: 'resume_link',
 };
 const JSON_FIELDS = new Set(['statuses', 'nextSteps']);
-const BOOL_FIELDS = new Set(['hmContactedDirectly']);
+const BOOL_FIELDS = new Set(['hmContactedDirectly', 'hmEstablished', 'recruiterEstablished']);
 
 export function updateCompany(id, patch) {
   const keys = Object.keys(patch).filter((k) => FIELD_MAP[k] !== undefined);
@@ -445,8 +491,8 @@ export function createEvent(input) {
   const now = Date.now();
   const id = input.id || uid();
   db.prepare(
-    `INSERT INTO events (id, company_id, timestamp, actor, kind, channel, details, notes, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO events (id, company_id, timestamp, actor, kind, channel, details, notes, processing_status, raw_text, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.companyId,
@@ -456,9 +502,18 @@ export function createEvent(input) {
     input.channel || '',
     JSON.stringify(input.details || {}),
     input.notes || '',
+    input.processingStatus || '',
+    input.rawText || '',
     now
   );
   return getEvent(id);
+}
+
+export function listPendingEvents(limit = 5) {
+  return db
+    .prepare("SELECT * FROM events WHERE processing_status = 'pending' ORDER BY created_at ASC LIMIT ?")
+    .all(limit)
+    .map(parseEvent);
 }
 
 const EVENT_FIELD_MAP = {
@@ -468,6 +523,8 @@ const EVENT_FIELD_MAP = {
   channel: 'channel',
   details: 'details',
   notes: 'notes',
+  processingStatus: 'processing_status',
+  processingError:  'processing_error',
 };
 const EVENT_JSON_FIELDS = new Set(['details']);
 
@@ -523,6 +580,7 @@ const parseContact = (row) => ({
   email:       row.email       || '',
   notes:       row.notes       || '',
   sourceUrl:   row.source_url  || '',
+  established: !!row.established,
   createdAt:   row.created_at,
 });
 
@@ -537,12 +595,12 @@ export function createContact(input) {
   const now = Date.now();
   const id  = input.id || uid();
   db.prepare(
-    `INSERT INTO contacts (id, company_id, role, title, first_name, last_name, linkedin_url, email, notes, source_url, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO contacts (id, company_id, role, title, first_name, last_name, linkedin_url, email, notes, source_url, established, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.companyId,
-    input.role        || 'other',
+    canonicalContactRole(input.role),
     input.title       || '',
     input.firstName   || '',
     input.lastName    || '',
@@ -550,53 +608,243 @@ export function createContact(input) {
     input.email       || '',
     input.notes       || '',
     input.sourceUrl   || '',
+    input.established ? 1 : 0,
     now
   );
   return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
 }
 
-// Upsert by (company_id + first/last name OR linkedin_url OR email).
-// Returns { contact, created: boolean }.
-export function upsertContact(input) {
-  const all = db.prepare('SELECT * FROM contacts WHERE company_id = ?').all(input.companyId).map(parseContact);
-  const norm = (s) => (s || '').trim().toLowerCase();
-
-  const match = all.find((c) => {
-    if (input.linkedinUrl && norm(c.linkedinUrl) === norm(input.linkedinUrl)) return true;
-    if (input.email && norm(c.email) === norm(input.email)) return true;
-    if (input.firstName && input.lastName &&
-        norm(c.firstName) === norm(input.firstName) &&
-        norm(c.lastName)  === norm(input.lastName)) return true;
-    return false;
-  });
-
-  if (match) {
-    // Patch only fields that arrive non-empty so we don't clobber existing data.
-    const patch = {};
-    const keep = (k, v) => { if (v && !match[k]) patch[k] = v; };
-    keep('title',       input.title);
-    keep('linkedinUrl', input.linkedinUrl);
-    keep('email',       input.email);
-    keep('sourceUrl',   input.sourceUrl);
-    keep('role',        input.role !== 'other' ? input.role : '');
-    if (Object.keys(patch).length) {
-      const cols = [];
-      const vals = [];
-      const colMap = { title: 'title', linkedinUrl: 'linkedin_url', email: 'email', sourceUrl: 'source_url', role: 'role' };
-      for (const k of Object.keys(patch)) {
-        cols.push(`${colMap[k]} = ?`);
-        vals.push(patch[k]);
-      }
-      vals.push(match.id);
-      db.prepare(`UPDATE contacts SET ${cols.join(', ')} WHERE id = ?`).run(...vals);
+// Normalise a LinkedIn profile URL down to "linkedin.com/in/<slug>" so two
+// URLs that differ only by trailing path / query / scheme / www compare equal.
+// Falls back to lowercased trimmed input for non-LinkedIn URLs.
+export function normalizeLinkedinUrl(raw) {
+  if (!raw) return '';
+  const cleaned = String(raw).trim();
+  if (!cleaned) return '';
+  try {
+    const u = new URL(cleaned.startsWith('http') ? cleaned : `https://${cleaned}`);
+    const host = u.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host.endsWith('linkedin.com')) {
+      const m = u.pathname.match(/^\/in\/([^/]+)/i);
+      if (m) return `linkedin.com/in/${m[1].toLowerCase()}`;
     }
-    return { contact: parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(match.id)), created: false };
+    return `${host}${u.pathname.replace(/\/+$/, '')}`.toLowerCase();
+  } catch {
+    return cleaned.toLowerCase();
   }
-  return { contact: createContact(input), created: true };
+}
+
+// True iff the two strings differ by at most one insertion / deletion /
+// substitution. Used for fuzzy last-name matching to catch typos like
+// "Hubbard" vs "Thubbard". O(min(|a|, |b|)).
+function withinOneEdit(a, b) {
+  if (a === b) return true;
+  const lenDiff = Math.abs(a.length - b.length);
+  if (lenDiff > 1) return false;
+  const [s, t] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0, j = 0, edits = 0;
+  while (i < s.length && j < t.length) {
+    if (s[i] !== t[j]) {
+      if (++edits > 1) return false;
+      if (s.length === t.length) { i++; j++; } else { j++; }
+    } else { i++; j++; }
+  }
+  return edits + (t.length - j) <= 1;
+}
+
+// Returns true if two contacts almost certainly describe the same person.
+// Tries: identical normalised LinkedIn slug, identical email, then a
+// last-name-fuzzy + first-name-or-initial match.
+function sameContactPerson(a, b) {
+  const aSlug = normalizeLinkedinUrl(a.linkedinUrl);
+  const bSlug = normalizeLinkedinUrl(b.linkedinUrl);
+  if (aSlug && bSlug && aSlug === bSlug) return true;
+
+  const norm = (s) => (s || '').trim().toLowerCase();
+  if (a.email && b.email && norm(a.email) === norm(b.email)) return true;
+
+  const aFirst = norm(a.firstName), bFirst = norm(b.firstName);
+  const aLast  = norm(a.lastName),  bLast  = norm(b.lastName);
+  if (!aLast || !bLast) return false;
+  if (!withinOneEdit(aLast, bLast)) return false;
+  if (aFirst && bFirst) {
+    return aFirst === bFirst || aFirst[0] === bFirst[0];
+  }
+  return false;
+}
+
+// Upsert by (company_id + same-person match). Pass `override: true` from the
+// manual contact form so user input wins over an existing LLM-extracted row;
+// LLM/extractor callers leave it false so the user's manual edits aren't
+// clobbered by automated re-extraction.
+// Returns { contact, created: boolean }.
+export function upsertContact(input, { override = false } = {}) {
+  const all = db.prepare('SELECT * FROM contacts WHERE company_id = ?').all(input.companyId).map(parseContact);
+  const probe = {
+    linkedinUrl: input.linkedinUrl || '',
+    email:       input.email       || '',
+    firstName:   input.firstName   || '',
+    lastName:    input.lastName    || '',
+  };
+  const match = all.find((c) => sameContactPerson(c, probe));
+
+  if (!match) return { contact: createContact(input), created: true };
+
+  if (override) {
+    // Manual form: user is the source of truth, replace every field they
+    // provided (including empties — clearing a field is intentional).
+    const patch = {};
+    const passThrough = ['title', 'firstName', 'lastName', 'linkedinUrl', 'email', 'notes'];
+    for (const k of passThrough) {
+      if (Object.prototype.hasOwnProperty.call(input, k)) patch[k] = input[k] ?? '';
+    }
+    if (input.role) patch.role = canonicalContactRole(input.role);
+    if (Object.prototype.hasOwnProperty.call(input, 'established')) patch.established = !!input.established;
+    const updated = updateContact(match.id, patch);
+    return { contact: updated, created: false };
+  }
+
+  // LLM/extractor path: only fill fields that are currently empty so we
+  // don't clobber data the user has already curated.
+  const patch = {};
+  const fillIfEmpty = (k, v) => { if (v && !match[k]) patch[k] = v; };
+  fillIfEmpty('title',       input.title);
+  fillIfEmpty('linkedinUrl', input.linkedinUrl);
+  fillIfEmpty('email',       input.email);
+  fillIfEmpty('sourceUrl',   input.sourceUrl);
+  fillIfEmpty('role',        input.role && input.role !== 'other' ? canonicalContactRole(input.role) : '');
+  if (!Object.keys(patch).length) return { contact: match, created: false };
+  const updated = updateContact(match.id, patch);
+  // updateContact doesn't know about sourceUrl — handle it directly.
+  if (patch.sourceUrl) {
+    db.prepare('UPDATE contacts SET source_url = ? WHERE id = ?').run(patch.sourceUrl, match.id);
+  }
+  return { contact: parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(match.id)), created: false };
+}
+
+// Collapse same-person duplicate rows (per company) into one. Picks the
+// "best" survivor by a heuristic: most non-empty fields, ties broken by
+// the most recent created_at — which works well in practice because
+// manually-curated rows have more populated fields than LLM stubs.
+export function dedupeContactsForCompany(companyId) {
+  const contacts = listContacts(companyId);
+  const score = (c) => {
+    let s = 0;
+    for (const k of ['title', 'firstName', 'lastName', 'linkedinUrl', 'email', 'notes']) {
+      if (c[k] && String(c[k]).trim()) s++;
+    }
+    if (c.role && c.role !== 'other') s++;
+    if (c.established) s++;
+    return s;
+  };
+
+  const groups = []; // [[contact, ...], ...]
+  for (const c of contacts) {
+    const g = groups.find((grp) => grp.some((x) => sameContactPerson(x, c)));
+    if (g) g.push(c);
+    else groups.push([c]);
+  }
+
+  let removed = 0;
+  for (const g of groups) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => {
+      const ds = score(b) - score(a);
+      if (ds !== 0) return ds;
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+    const [keeper, ...losers] = g;
+    // Salvage any field the keeper is missing but a loser has.
+    const salvage = {};
+    for (const k of ['title', 'linkedinUrl', 'email', 'notes']) {
+      if (!keeper[k]) {
+        const donor = losers.find((l) => l[k]);
+        if (donor) salvage[k] = donor[k];
+      }
+    }
+    if (losers.some((l) => l.established) && !keeper.established) salvage.established = true;
+    if (Object.keys(salvage).length) updateContact(keeper.id, salvage);
+    for (const l of losers) {
+      db.prepare('DELETE FROM contacts WHERE id = ?').run(l.id);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+export function dedupeAllContacts() {
+  const ids = db.prepare('SELECT id FROM companies').all().map((r) => r.id);
+  let total = 0;
+  for (const id of ids) total += dedupeContactsForCompany(id);
+  return total;
+}
+
+export function updateContact(id, input) {
+  const colMap = {
+    title:       'title',
+    firstName:   'first_name',
+    lastName:    'last_name',
+    linkedinUrl: 'linkedin_url',
+    email:       'email',
+    notes:       'notes',
+    role:        'role',
+    established: 'established',
+  };
+  const cols = [];
+  const vals = [];
+  for (const k of Object.keys(colMap)) {
+    if (Object.prototype.hasOwnProperty.call(input, k)) {
+      cols.push(`${colMap[k]} = ?`);
+      if (k === 'established') vals.push(input[k] ? 1 : 0);
+      else vals.push(input[k] ?? '');
+    }
+  }
+  if (!cols.length) return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
+  vals.push(id);
+  db.prepare(`UPDATE contacts SET ${cols.join(', ')} WHERE id = ?`).run(...vals);
+  return parseContact(db.prepare('SELECT * FROM contacts WHERE id = ?').get(id));
 }
 
 export function deleteContact(id) {
   db.prepare('DELETE FROM contacts WHERE id = ?').run(id);
+}
+
+// Canonicalise a role string from the LLM or form into the value we store.
+// Keeps DB reads simple — sync and the kanban card only handle the canonical
+// names ('hiring_manager', 'recruiter', 'referral', 'other').
+export function canonicalContactRole(raw) {
+  const r = (raw || '').toLowerCase();
+  if (r === 'hm' || r === 'hiring_manager') return 'hiring_manager';
+  if (r === 'rec' || r === 'recruiter')      return 'recruiter';
+  if (r === 'ref' || r === 'referral')       return 'referral';
+  return 'other';
+}
+
+// Project per-role contact info onto the company row so the kanban card can
+// render its pills + green-dot status from a single row read. Called after
+// every contact create/update/delete and on boot for every company.
+export function syncFlatContactCols(companyId) {
+  const contacts = listContacts(companyId);
+  const hm  = contacts.find((c) => c.role === 'hiring_manager');
+  const rec = contacts.find((c) => c.role === 'recruiter');
+  const ref = contacts.find((c) => c.role === 'referral');
+  const fullName = (c) => [c?.firstName, c?.lastName].filter(Boolean).join(' ');
+  const anyEstablished = (role) => contacts.some((c) => c.role === role && c.established);
+  return updateCompany(companyId, {
+    hmName:               fullName(hm),
+    recruiterName:        fullName(rec),
+    recruiterCompany:     rec?.notes || '',
+    referralName:         fullName(ref),
+    referralRelationship: ref?.notes || '',
+    hmEstablished:        anyEstablished('hiring_manager'),
+    recruiterEstablished: anyEstablished('recruiter'),
+  });
+}
+
+export function resyncAllFlatContactCols() {
+  const ids = db.prepare('SELECT id FROM companies').all().map((r) => r.id);
+  for (const id of ids) syncFlatContactCols(id);
+  return ids.length;
 }
 
 // ── Fitness logs ───────────────────────────────────────────────────────────────

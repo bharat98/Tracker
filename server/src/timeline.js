@@ -6,7 +6,8 @@
 //   - one optional stage_change
 
 const TIMEOUT_MS = 20_000;
-const MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free';
+const TEXT_MODEL   = process.env.OPENROUTER_MODEL        || 'openai/gpt-oss-20b:free';
+const VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || '';
 
 const STAGES = ['sourced', 'networked', 'applied', 'screen', 'interview', 'final', 'offer', 'closed'];
 const EVENT_KINDS = [
@@ -53,7 +54,7 @@ function stubResult(text) {
   };
 }
 
-export async function parseTimelineEntry({ text, url, hasImage, company }) {
+export async function parseTimelineEntry({ text, url, hasImage, imageDataUri, company }) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return stubResult(text);
 
@@ -67,6 +68,18 @@ export async function parseTimelineEntry({ text, url, hasImage, company }) {
     'Entry text:',
     text.trim(),
   ].filter(Boolean).join('\n');
+
+  // Use the vision model only when configured AND we actually have image bytes
+  // to send. Otherwise fall back to the text model — vision models can be both
+  // slower and lower-quality on text-only prompts.
+  const useVision = !!(VISION_MODEL && imageDataUri);
+  const model = useVision ? VISION_MODEL : TEXT_MODEL;
+  const userContent = useVision
+    ? [
+        { type: 'text', text: userMessage },
+        { type: 'image_url', image_url: { url: imageDataUri } },
+      ]
+    : userMessage;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -82,11 +95,11 @@ export async function parseTimelineEntry({ text, url, hasImage, company }) {
         'X-Title': 'Job Tracker Timeline',
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         temperature: 0,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMessage },
+          { role: 'user', content: userContent },
         ],
       }),
     });
